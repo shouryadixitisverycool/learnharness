@@ -1196,7 +1196,7 @@ describe("study time: the bridge forwards learner input (docs/designs/study-time
 	});
 
 	it("reduceDemoBridgeState leaves state unchanged for both", () => {
-		const state = { height: 200, error: null };
+		const state = { height: 200, error: null, tone: null };
 		assert.equal(reduceDemoBridgeState(state, { type: "demo-input" }), state);
 		assert.equal(reduceDemoBridgeState(state, { type: "demo-blur" }), state);
 	});

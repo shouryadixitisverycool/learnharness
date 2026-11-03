@@ -344,6 +344,7 @@ describe("study time: closeAll on window close", () => {
 		const electron = {
 			app: { setName() {}, getPath: () => "/fixture/LearnHarness", setPath() {}, requestSingleInstanceLock: () => false, quit() {} },
 			BrowserWindow: FakeWindow,
+			nativeTheme: { shouldUseDarkColors: true, themeSource: "system", on() {} },
 			session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
 		};
 		const calls: { url: string; init: { method: string; headers: Record<string, string>; body: string } }[] = [];
