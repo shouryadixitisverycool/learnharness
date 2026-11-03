@@ -98,6 +98,8 @@ Pending calls are record-derived, so reopening an unanswered question needs no n
 
 **Plan:** `plan_init` parses a restricted Mermaid graph and validates its DAG structure. It writes/replaces the whole plan; it is intentionally re-callable, not mechanically author-once. Question node IDs validate against the current tree. Current/visited/upcoming statuses derive from tagged calls, not grades or explicit “done” writes. Presenting the plan and waiting for a natural learner reply is prompt doctrine, not a separate acceptance transaction.
 
+**Session naming:** the teacher includes a concise `title` with the first `plan_init`, using the clarified goal and plan in the learner's language. After the tree is saved, the store replaces a prompt-derived title once and announces `chats-changed` to both sidebar and header. `titleSource` distinguishes prompt, plan, and manual titles; older records without a source are preserved. Missing titles or title-write failures leave the lesson usable with its existing title. Naming uses the teaching call and its normal usage accounting, with no separate model request.
+
 ## 4. Conversational practice
 
 Practice uses the same chats store, admission, native turn runner, steering, usage and recovery as teaching. It is **not** the former partitioner → problem-generator → grader problem-set service: there are no current `/api/practice/sets` routes or separate practice store.
