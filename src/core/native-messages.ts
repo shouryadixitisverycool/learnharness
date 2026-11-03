@@ -77,7 +77,9 @@ export interface LhMarkerMessage {
 		| "practice-thinking"
 		| "practice-next"
 		| "problem-dismissed"
-		| "compaction";
+		| "compaction"
+		| "side-question"
+		| "side-question-told";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
 	display: boolean;
@@ -118,6 +120,21 @@ export function cliContextWindowOf(messages: readonly LhMessage[]): { model: str
  *  the replay (ui-stream/chat-handler assign it to initialState.messages). */
 export function asAgentMessages(messages: readonly LhMessage[]): AgentMessage[] {
 	return messages as unknown as AgentMessage[];
+}
+
+/** Side-question markers (#16) never change what the record's tail
+ *  means: a closed side thread leaves a dismissal pause, a Retry, a
+ *  recovery, or an owed continuation exactly as it found them. */
+export function isSideQuestionMarker(m: LhMessage | AgentMessage | undefined): boolean {
+	if ((m as { role?: string } | undefined)?.role !== "custom") return false;
+	const type = (m as LhMarkerMessage).customType;
+	return type === "side-question" || type === "side-question-told";
+}
+
+function tailIgnoringSideQuestions<T>(messages: readonly T[]): readonly T[] {
+	let end = messages.length;
+	while (end > 0 && isSideQuestionMarker(messages[end - 1] as never)) end--;
+	return end === messages.length ? messages : messages.slice(0, end);
 }
 
 // ─── explicit learner-facing output ─────────────────────────────────────────
@@ -632,7 +649,9 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 			const marker = m as LhMarkerMessage;
 			// UI-only markers: plan blocks, and problem dismissals (the
 			// synthesized conclude pair carries the model's face).
+			// Side questions the learner kept from the tutor are UI-only too.
 			if (marker.customType === "plan-block" || marker.customType === "problem-dismissed") continue;
+			if (marker.customType === "side-question" && !marker.content) continue;
 			// The head supersedes every compaction marker, not only its own
 			// stored position. Without a resolved head, preserve the existing
 			// full-history fallback, including the summary text.
@@ -831,7 +850,8 @@ function isDismissedResult(m: LhMessage): boolean {
  *  the wake pipeline holds job deliveries in the steer queue until the
  *  next send. Derived from the tail — no latch to persist or clear; any
  *  user message flips it off by changing the record. */
-export function endsInDismissal(messages: readonly LhMessage[]): boolean {
+export function endsInDismissal(record: readonly LhMessage[]): boolean {
+	const messages = tailIgnoringSideQuestions(record);
 	const last = messages[messages.length - 1];
 	return last !== undefined && isDismissedResult(last);
 }
@@ -839,7 +859,8 @@ export function endsInDismissal(messages: readonly LhMessage[]): boolean {
 /** The recovery click authorizes its immediate replacement turn, not an
  * automatic restart if only the write-ahead error results survived. No new
  * stored latch: explicit input or replacement output changes this tail. */
-export function endsInQuestionRecovery(messages: readonly LhMessage[]): boolean {
+export function endsInQuestionRecovery(record: readonly LhMessage[]): boolean {
+	const messages = tailIgnoringSideQuestions(record);
 	const last = messages[messages.length - 1];
 	return last?.role === "toolResult" && last.isError &&
 		(last.details as { questionRecovery?: unknown } | null)?.questionRecovery === true;
@@ -855,7 +876,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
 		if (["practice-thinking", "practice-next"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction"].includes(message.customType) ? "neutral" : "unrecognizable";
+		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		if (message.isError && (message.details as { questionRecovery?: unknown } | null)?.questionRecovery === true) {
@@ -899,7 +920,8 @@ export function reconstructRequestCause(messages: readonly LhMessage[]): Reconst
 	return resolve();
 }
 
-export function needsContinuation(messages: readonly LhMessage[]): boolean {
+export function needsContinuation(record: readonly LhMessage[]): boolean {
+	const messages = tailIgnoringSideQuestions(record);
 	const last = messages[messages.length - 1];
 	if (!last || (last as { role?: string }).role !== "toolResult") return false;
 	// The trailing results batch (contiguous by construction — the agent

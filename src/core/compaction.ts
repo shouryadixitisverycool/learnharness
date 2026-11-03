@@ -196,6 +196,7 @@ export function estimateTokens(messages: readonly (LhMessage | AgentMessage)[]):
 function cutMessage(message: LhMessage): LhMessage | null {
 	if (message.role !== "custom") return message;
 	if (["compaction", "plan-block", "problem-dismissed"].includes(message.customType)) return null;
+	if (message.customType === "side-question" && !message.content) return null; // kept from the tutor
 	return message;
 }
 
@@ -336,6 +337,7 @@ export function serializeForSummary(messages: readonly LhMessage[]): string {
 		} else if (role === "custom") {
 			const marker = m as LhMarkerMessage;
 			if (marker.customType === "plan-block") continue; // UI-only
+			if (marker.customType === "side-question" && !marker.content) continue; // kept from the tutor
 			lines.push(`[SYSTEM NOTE] ${marker.content}`);
 		}
 	}

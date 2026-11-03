@@ -48,6 +48,7 @@ export * from "./input-events.ts";
 export { parseFilePaths, quoteFilePath, filePathLabel } from "./file-paths.ts";
 export type { FilePathPart } from "./file-paths.ts";
 export * from "./citations.ts";
+export * from "./side-questions.ts";
 export { parseComposerTokens } from "./composer-tokens.ts";
 export type { ComposerToken } from "./composer-tokens.ts";
 // Wave D (owner-approved 2026-09-26): the client view model — the grouping
