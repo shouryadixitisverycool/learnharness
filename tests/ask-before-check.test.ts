@@ -35,10 +35,22 @@ function probeDone(): LhMessage {
 	} as LhMessage;
 }
 
-const CHECK = { question: "What carries the tense?", type: "check", nodeId: "n1" };
+// Complete quiz arguments: main drops a call whose input fails the display
+// parse, so a bare { question, type } never counts as an open question.
+const QUIZ = {
+	options: [
+		{ label: "had", value: "had" },
+		{ label: "watched", value: "watched" },
+	],
+	correctAnswer: "had",
+	explanation: "The auxiliary carries the tense.",
+};
+const CHECK = { ...QUIZ, question: "What carries the tense?", type: "check", nodeId: "n1" };
 
 function teachCheck(calls: { id: string; name?: string; arguments?: unknown }[] = [{ id: "c1" }]): LhMessage[] {
 	return [
+		// main counts a probe_done result only after its matching call.
+		assistant("ap", [{ id: "probe-done", name: "probe_done", arguments: {} }]),
 		probeDone(),
 		assistant(
 			"a1",
@@ -78,7 +90,7 @@ describe("ask-before-check appends", () => {
 
 	it("closes a prediction, then appends his message", () => {
 		const appends = inputAppends(
-			{ messages: teachCheck([{ id: "c1", arguments: { question: "Guess?", type: "predict", nodeId: "n1" } }]) },
+			{ messages: teachCheck([{ id: "c1", arguments: { ...QUIZ, question: "Guess?", type: "predict", nodeId: "n1" } }]) },
 			{ type: "ask-before-check", toolCallId: "c1", text: "why those three?" },
 		);
 		assert.equal(appends.length, 2);
@@ -87,14 +99,14 @@ describe("ask-before-check appends", () => {
 		assert.equal(result.toolCallId, "c1");
 		assert.deepEqual(JSON.parse(result.content[0]!.text), { kind: "quiz", notYet: true });
 		assert.equal((appends[1] as { role: string; content: string }).content, "why those three?");
-		assert.equal(danglingQuestionCount([...teachCheck([{ id: "c1", arguments: { question: "Guess?", type: "predict", nodeId: "n1" } }]), ...appends]), 0);
+		assert.equal(danglingQuestionCount([...teachCheck([{ id: "c1", arguments: { ...QUIZ, question: "Guess?", type: "predict", nodeId: "n1" } }]), ...appends]), 0);
 	});
 
 	it("closes an explain prediction the same way", () => {
 		const appends = inputAppends(
 			{
 				messages: teachCheck([
-					{ id: "c1", name: "explain", arguments: { question: "What gives?", type: "predict", nodeId: "n1" } },
+					{ id: "c1", name: "explain", arguments: { question: "What gives?", correctAnswer: "The rule.", type: "predict", nodeId: "n1" } },
 				]),
 			},
 			{ type: "ask-before-check", toolCallId: "c1", text: "before I guess" },
@@ -109,7 +121,7 @@ describe("ask-before-check appends", () => {
 			/only open question/,
 		);
 		assert.throws(
-			() => inputAppends({ messages: [assistant("a", [{ id: "c1", name: "quiz", arguments: { question: "Q?" } }])] }, { type: "ask-before-check", toolCallId: "c1", text: "huh?" }),
+			() => inputAppends({ messages: [assistant("a", [{ id: "c1", name: "quiz", arguments: { ...QUIZ, question: "Q?" } }])] }, { type: "ask-before-check", toolCallId: "c1", text: "huh?" }),
 			/teach-phase question/,
 		);
 		assert.throws(
