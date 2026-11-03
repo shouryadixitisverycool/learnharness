@@ -70,6 +70,28 @@ describe("listChats summary cache", () => {
 		await assertParity();
 	});
 
+	it("sees a same-size store save, which replaces the file through an atomic rename", async () => {
+		const g = chatStore.createChat("CCCC");
+		const file = path.join(PATHS.chats, `${g.id}.json`);
+		chatStore.listChats();
+		const before = fs.statSync(file);
+		chatStore.renameChat(g.id, "DDDD");
+		const after = fs.statSync(file);
+		assert.equal(after.size, before.size);
+		assert.notEqual(after.ino, before.ino, "writeFileAtomicSync renames a new file into place");
+		assert.equal(chatStore.listChats().find((x) => x.id === g.id)?.title, "DDDD");
+		await assertParity();
+	});
+
+	it("ignores temp files a crashed atomic save left behind", async () => {
+		const h = chatStore.createChat("leftover");
+		const file = path.join(PATHS.chats, `${h.id}.json`);
+		fs.writeFileSync(`${file}.tmp-00000000-0000-0000-0000-000000000000`, fs.readFileSync(file, "utf-8").replace('"leftover"', '"half saved"'));
+		const listed = chatStore.listChats().filter((x) => x.id === h.id);
+		assert.deepEqual(listed.map((x) => x.title), ["leftover"]);
+		await assertParity();
+	});
+
 	it("returns copies, so callers cannot corrupt the cache", () => {
 		const d = chatStore.createChat("copy check");
 		const first = chatStore.listChats().find((x) => x.id === d.id)!;
