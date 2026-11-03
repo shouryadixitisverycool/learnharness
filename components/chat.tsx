@@ -77,11 +77,14 @@ import {
 	malformedQuestionsOf,
 	dismissedAnswer,
 	endsInFailedTurn,
+	askBeforeCheckVisible,
 	findPendingToolCall,
+	pendingQuestionCount,
 	phaseAt3,
 	phaseTimeline,
 	teachStepIndex,
 	toolQuestionKind,
+	questionAllowsAskBefore,
 	questionNeedsReveal,
 } from "@/src/core";
 import { ReadingThinkingField } from "@/components/reading-thinking";
@@ -412,8 +415,10 @@ export function Chat({
 			const p = pendingRef.current;
 			if (p) {
 				const question = (p.input as { question?: string } | null)?.question ?? "";
-				const reading = readingThinkingRef.current.trim() || undefined;
-				clearReadingThinking();
+				// Notes ride a teach-check dismissal. Another open question
+				// (a prediction, a probe) leaves them for the check's return.
+				const reading = requiresRevealRef.current ? readingThinkingRef.current.trim() || undefined : undefined;
+				if (requiresRevealRef.current) clearReadingThinking();
 				const answer = dismissedAnswer(toolQuestionKind(p.tool), question);
 				void dismissQuestion(
 					p.toolCallId,
@@ -456,6 +461,8 @@ export function Chat({
 	// listener is mount-scoped; the value it needs is render-scoped).
 	const pendingRef = useRef(pending);
 	pendingRef.current = pending;
+	// The abort confirm reads this after the render that computed it.
+	const requiresRevealRef = useRef(false);
 
 	// THE ACTIVE PRACTICE PROBLEM (practice sessions, 2026-10-04): the
 	// same dock-ownership rule as a pending question — an active problem
@@ -516,13 +523,17 @@ export function Chat({
 	// ends at the question call), so the session's current phase IS the
 	// question's phase.
 	const requiresReveal = pending !== null && questionNeedsReveal(pending.tool, pending.input, phaseAt3(messages));
+	requiresRevealRef.current = requiresReveal;
 
 	/* The READING-THINKING channel (owner 2026-10-03): a draft field for
 	 * thinking while reading the teaching prose, mounted while a check waits
 	 * behind its reveal, riding the check answer (or its dismissal) as the
-	 * separate `readingThinking` field. Reset per pending question. */
+	 * separate `readingThinking` field. Reset per pending question, except
+	 * across an ask-before-check: that closes the check and the teacher
+	 * poses it again, and the notes stay for that return. */
 	const [readingThinkingSeed, setReadingThinkingSeed] = useState({ questionId: null as string | null, value: "", revision: 0 });
 	const readingThinkingRef = useRef("");
+	const preserveReadingRef = useRef(false);
 
 	// ⌘T (toggle-user-thinking, owner round 2026-10-07): set EVERY user
 	// thinking row to one state — transcript rows default open, so the
@@ -536,6 +547,7 @@ export function Chat({
 		readingThinkingRef.current = v;
 	}, []);
 	const clearReadingThinking = useCallback(() => {
+		preserveReadingRef.current = false;
 		readingThinkingRef.current = "";
 		setReadingThinkingSeed((previous) => ({ ...previous, value: "", revision: previous.revision + 1 }));
 	}, []);
@@ -543,7 +555,10 @@ export function Chat({
 	useLayoutEffect(() => {
 		// Different calls never share a draft; a failed submission of THIS
 		// call restores the reading channel alongside the form's snapshot.
-		const value = pendingQuestionId ? questionDraft(pendingQuestionId)?.readingThinking ?? "" : "";
+		// An ask-before-check (#138) carries the notes to the re-posed check.
+		const value = preserveReadingRef.current
+			? readingThinkingRef.current
+			: pendingQuestionId ? questionDraft(pendingQuestionId)?.readingThinking ?? "" : "";
 		readingThinkingRef.current = value;
 		setReadingThinkingSeed((previous) =>
 			previous.questionId === pendingQuestionId && previous.value === value
@@ -1199,6 +1214,18 @@ export function Chat({
 		void syncFromServer();
 	});
 
+	const openQuestions = pendingQuestionCount(messages);
+	const predictionPending =
+		pending !== null && !requiresReveal && questionAllowsAskBefore(pending.tool, phaseAt3(messages));
+	const onAskBeforeCheck = () => {
+		if (!pending || compacting || busy) return;
+		if (!askBeforeCheckVisible(requiresReveal, predictionPending, openQuestions)) return;
+		const t = textRef.current.trim();
+		if (!t) return;
+		preserveReadingRef.current = true;
+		applyText("");
+		void send({ type: "ask-before-check", toolCallId: pending.toolCallId, text: t });
+	};
 	const onSend = () => {
 		if (pending || compacting) return;
 		/* FINISH DICTATION FIRST (owner, 2026-10-01): a learner who keeps
@@ -1757,6 +1784,24 @@ export function Chat({
 							placeholder={nextReady ? "Ask anything, or press Enter for the next one." : undefined}
 						/>
 					}
+					openQuestions={openQuestions}
+					askComposer={
+						openQuestions === 1 ? (
+							<ChatSessionComposer
+								busy={false}
+								value={textRef.current}
+								revision={composerDraftRevision}
+								onChange={recordComposerText}
+								onSend={onAskBeforeCheck}
+								onStop={() => {}}
+								sendAllowed={!compacting && !busy}
+								// #138's send rule: typed text only (onAskBeforeCheck).
+								dictationActive={false}
+								onEscape={dictation.active ? dictation.cancel : undefined}
+								placeholder="Ask about what you just read…"
+							/>
+						) : null
+					}
 					onSubmitAnswer={(output) => {
 						if (!pending) return;
 						// THE ANSWER IS THE QUESTION CALL'S TOOL RESULT (fork 1, owner
@@ -1766,9 +1811,12 @@ export function Chat({
 						// turn; the teacher's reaction streams below it. Dismissals
 						// ride the same callback (QuestionAnswerData.dismissed). The
 						// reading-thinking draft rides along (owner 2026-10-03) — the
-						// check answer is its only carrier.
+						// check answer is its only carrier. A prediction or probe
+						// answer leaves the notes for the teach check's return.
 						saveQuestionDraft(pending.key, { readingThinking: readingThinkingRef.current });
-						const reading = readingThinkingRef.current.trim() || undefined;
+						const reading = requiresReveal ? readingThinkingRef.current.trim() || undefined : undefined;
+						// The check's answer consumes the notes: stop carrying them.
+						if (requiresReveal) preserveReadingRef.current = false;
 						// The pending-id effect clears this only when the question
 						// actually leaves. An offline preflight keeps the draft visible.
 						submitAnswer(pending.tool, pending.toolCallId, reading ? { ...output, readingThinking: reading } : output, pending.key);
@@ -1953,6 +2001,8 @@ function DockOverlay({
 	cliContextWindow,
 	pricing,
 	composer,
+	askComposer,
+	openQuestions,
 	onSubmitAnswer,
 	chatId,
 	onModelChange,
@@ -1991,6 +2041,10 @@ function DockOverlay({
 	cliContextWindow: ReturnType<typeof cliContextWindowOf>;
 	pricing?: SessionPricing;
 	composer: React.ReactNode;
+	/** The ask box above a closed teach check or a prediction, when that
+	 *  call is the only open question. */
+	askComposer?: React.ReactNode;
+	openQuestions: number;
 	onSubmitAnswer: (output: QuestionAnswerData) => void;
 	/** The model control's pass-through (the stats bar hosts it). */
 	chatId: string;
@@ -2031,6 +2085,8 @@ function DockOverlay({
 	// revealed, the normal collapse machine rules apply untouched.
 	const [revealed, setRevealed] = useState(false);
 	const revealPending = requiresReveal && !revealed;
+	const predictionPending =
+		pending !== null && !requiresReveal && questionAllowsAskBefore(pending.tool, phase);
 
 	const pendingId = pending?.key ?? null;
 	const initialPendingRef = useRef(pendingId);
@@ -2410,6 +2466,18 @@ function DockOverlay({
 							}
 							claim={revealPending}
 						/>
+					)}
+					{/* Ask about the teaching just given. Above a closed check the
+					    notes stay in the field; above a prediction the box sits
+					    on the dock, open or folded. The send closes the call
+					    as notYet and the teacher poses the same question again. */}
+					{askBeforeCheckVisible(revealPending, predictionPending, openQuestions) && askComposer && (
+						<div
+							data-testid="ask-before-check"
+							className="pointer-events-auto mb-2 overflow-hidden rounded-2xl border bg-card shadow-lg"
+						>
+							{askComposer}
+						</div>
 					)}
 					<div ref={shellRef} className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
 						{/* Include descendant margins (notably practice thinking's

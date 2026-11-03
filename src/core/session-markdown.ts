@@ -21,6 +21,7 @@
  */
 
 import type { LhMessage } from "./native-messages.ts";
+import { normalizeQuizType } from "./question-core.ts";
 import {
 	failedOutputCallIds,
 	PRACTICE_CONCLUDE_TOOL,
@@ -81,6 +82,7 @@ function toolResultBody(result: ToolResultMessage, ctx?: MarkdownContext): { hea
 				answers: string[];
 				other: string;
 				dismissed: boolean;
+				notYet: boolean;
 		  }>
 		| undefined;
 
@@ -100,7 +102,15 @@ function toolResultBody(result: ToolResultMessage, ctx?: MarkdownContext): { hea
 						: "Recall check"; // explain — the teach free-recall name
 		const question = typeof out?.questionText === "string" && out.questionText ? out.questionText : "(no question text)";
 		const body = [`**Q:** ${question}`];
-		if (out?.dismissed === true) body.push("The learner skipped this check.");
+		if (out?.notYet === true) {
+			const predicted = normalizeQuizType(ctx?.calls.get(result.toolCallId)?.args?.type) === "predict";
+			body.push(
+				predicted
+					? "The learner asked something before taking this prediction."
+					: "The learner asked something before taking this check.",
+			);
+		}
+		else if (out?.dismissed === true) body.push("The learner skipped this check.");
 		else if (out?.dontKnow === true) body.push("The learner did not know.");
 		else if (out?.correct === true) body.push("The learner answered correctly.");
 		else if (out?.correct === false) body.push("The learner answered incorrectly.");
