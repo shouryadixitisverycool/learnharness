@@ -86,6 +86,7 @@ import {
 } from "@/src/core";
 import { ReadingThinkingField } from "@/components/reading-thinking";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
+import { useAppearance } from "@/components/settings/appearance";
 
 /**
  * Width tokens: the composer/question DOCK is a centered 46rem column, and
@@ -2088,6 +2089,8 @@ function DockOverlay({
 	pendingRef.current = !!pending || !!practice;
 	const requiresRevealRef = useRef(requiresReveal);
 	requiresRevealRef.current = requiresReveal;
+	const autoCollapseRef = useRef(true);
+	autoCollapseRef.current = useAppearance().appearance.autoCollapseQuestions;
 	const revealedRef = useRef(revealed);
 	revealedRef.current = revealed;
 
@@ -2293,7 +2296,11 @@ function DockOverlay({
 				// folded on stick-to-bottom's catch-up transients; a real fold
 				// needs the distance AND stick-to-bottom agreeing the learner
 				// left the bottom.
-				if (shouldFold(d, { intent: expandIntentRef.current, atBottom: atBottomRef.current, pinned: pinnedRef.current }))
+				// Auto-collapse setting (#127): off means scrolling never folds.
+				if (
+					autoCollapseRef.current &&
+					shouldFold(d, { intent: expandIntentRef.current, atBottom: atBottomRef.current, pinned: pinnedRef.current })
+				)
 					setExpanded(false);
 			} else if (d < EXPAND_DIST) {
 				// Teach checks stay collapsed until the learner opens them (W5): the
