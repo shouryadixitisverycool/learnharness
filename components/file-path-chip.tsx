@@ -9,7 +9,8 @@ import {
 	FileText,
 	FileVideo,
 } from "lucide-react";
-import { filePathLabel, parseFilePaths } from "@/src/core";
+import { filePathLabel, parseComposerTokens } from "@/src/core";
+import { CitationChip } from "./citation-chip";
 
 function fileIcon(label: string) {
 	const extension = label.split(".").at(-1)?.toLowerCase();
@@ -48,13 +49,16 @@ export function FilePathChip({ path, contentEditable, className }: FilePathChipP
 	);
 }
 
-/** Ordinary learner text stays ordinary text; only quoted paths become chips. */
+/** Ordinary learner text stays ordinary text; only quoted paths and tutor
+ *  citations become chips. */
 export function PathText({ text }: { text: string }) {
 	return (
 		<>
-			{parseFilePaths(text).map((part) => (
+			{parseComposerTokens(text).map((part) => (
 				<Fragment key={part.start}>
-					{part.kind === "path" ? <FilePathChip path={part.path} /> : part.text}
+					{part.kind === "path" ? <FilePathChip path={part.path} />
+						: part.kind === "citation" ? <CitationChip citation={part.citation} variant="transcript" />
+						: part.text}
 				</Fragment>
 			))}
 		</>
