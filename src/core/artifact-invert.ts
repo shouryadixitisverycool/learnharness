@@ -14,11 +14,11 @@
  * Pure, browser-safe (the cards and the artifact-ui route share it).
  */
 
+// The palette the app is rendering (appearance-palette.ts owns the type).
+import type { RenderedMode } from "./appearance-palette.ts";
+
 /** Whether an artifact was drawn light — measured in the browser. */
 export type ArtifactTone = "light" | "dark" | "unknown";
-
-/** The palette the app is rendering right now. */
-export type RenderedMode = "dark" | "light";
 
 export function autoInverted(mode: RenderedMode, tone: ArtifactTone): boolean {
 	return mode === "dark" && tone === "light";
