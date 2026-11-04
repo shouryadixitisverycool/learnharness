@@ -34,7 +34,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Message, TextContent, ToolResultMessage, UserMessage } from "@earendil-works/pi-ai";
 import { QUESTION_TOOLS, type PendingQuestion } from "./pending.ts";
 import { CLAUDE_CODE_PROVIDER } from "./contracts/claude-code.ts";
 import {
@@ -46,6 +46,7 @@ import {
 import { compactAnswerForModel, type QuestionAnswerData } from "./question-core.ts";
 import { activeCompactionOf, keptIndexFor } from "./compaction.ts";
 import { parseQuestionInput } from "./tool-parts.ts";
+import { expandCitationsForModel } from "./citations.ts";
 
 /** The hard-invariant wording for an aborted turn's unanswered calls —
  *  carried over verbatim from the pre-native era so the model's view
@@ -76,7 +77,9 @@ export interface LhMarkerMessage {
 		| "practice-thinking"
 		| "practice-next"
 		| "problem-dismissed"
-		| "compaction";
+		| "compaction"
+		| "side-question"
+		| "side-question-told";
 	/** The model-facing text ("" for plan blocks — UI-only). */
 	content: string;
 	display: boolean;
@@ -91,9 +94,13 @@ declare module "@earendil-works/pi-agent-core" {
 	}
 }
 
-/** A record message: a native pi message (or our marker) plus the record id. */
+/** A record message: a native pi message (or our marker) plus the record id.
+ *  `attachmentIds` (learner user messages only, 2026-10-29) names the
+ *  session attachments sent with that message — ids, never bytes; images
+ *  expand at the wire (toLlmMessages' attachmentParts hook). */
 export type LhMessage = (UserMessage | AssistantMessage | ToolResultMessage | LhMarkerMessage) & {
 	id: string;
+	attachmentIds?: string[];
 	/** CLI-reported effective context budget, not a catalog model maximum.
 	 * App-only metadata: never transmitted as provider/model message content. */
 	cliContextWindow?: number;
@@ -117,6 +124,21 @@ export function cliContextWindowOf(messages: readonly LhMessage[]): { model: str
  *  the replay (ui-stream/chat-handler assign it to initialState.messages). */
 export function asAgentMessages(messages: readonly LhMessage[]): AgentMessage[] {
 	return messages as unknown as AgentMessage[];
+}
+
+/** Side-question markers (#16) never change what the record's tail
+ *  means: a closed side thread leaves a dismissal pause, a Retry, a
+ *  recovery, or an owed continuation exactly as it found them. */
+export function isSideQuestionMarker(m: LhMessage | AgentMessage | undefined): boolean {
+	if ((m as { role?: string } | undefined)?.role !== "custom") return false;
+	const type = (m as LhMarkerMessage).customType;
+	return type === "side-question" || type === "side-question-told";
+}
+
+function tailIgnoringSideQuestions<T>(messages: readonly T[]): readonly T[] {
+	let end = messages.length;
+	while (end > 0 && isSideQuestionMarker(messages[end - 1] as never)) end--;
+	return end === messages.length ? messages : messages.slice(0, end);
 }
 
 // ─── explicit learner-facing output ─────────────────────────────────────────
@@ -179,12 +201,13 @@ export function newMessageId(): string {
 //     core/input-events.ts; steers in core/contracts/jobs.ts) ─────────────────
 
 /** A learner-authored user message (text input, verdict note). */
-export function newUserMessage(text: string): LhMessage & UserMessage {
+export function newUserMessage(text: string, attachmentIds?: readonly string[]): LhMessage & UserMessage {
 	return {
 		id: newMessageId(),
 		role: "user",
 		content: text,
 		timestamp: Date.now(),
+		...(attachmentIds?.length ? { attachmentIds: [...attachmentIds] } : {}),
 	};
 }
 
@@ -562,6 +585,11 @@ function resultIdsFrom(messages: readonly AgentMessage[]): Set<string> {
 	return ids;
 }
 
+function expandUserCitations(message: UserMessage): UserMessage {
+	if (typeof message.content === "string") return { ...message, content: expandCitationsForModel(message.content) };
+	return { ...message, content: message.content.map((block) => (block.type === "text" ? { ...block, text: expandCitationsForModel(block.text) } : block)) };
+}
+
 /**
  * AgentMessage[] → the provider wire (the agent's convertToLlm — required
  * by pi-agent-core's loop config, the ONE place model-facing decisions
@@ -580,7 +608,16 @@ function resultIdsFrom(messages: readonly AgentMessage[]): Set<string> {
  * Contract (pi-agent-core): never throws — an unknown shape passes
  * through untouched rather than killing the loop.
  */
-export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
+export function toLlmMessages(
+	messages: readonly AgentMessage[],
+	opts: {
+		/** Content parts appended to a user message that carries attachment
+		 *  ids (the agent layer reads and processes image bytes from disk;
+		 *  a part may be a text note about the image). Runs only for
+		 *  messages that survive the compaction cut. Absent = ids just strip. */
+		attachmentParts?: (ids: readonly string[]) => Array<TextContent | ImageContent>;
+	} = {},
+): Message[] {
 	// THE COMPACTION CUT (owner round 14, 2026-10-05): the ACTIVE marker
 	// (the newest — chained compactions rule last) names the first kept
 	// message; everything before it is replaced by the marker's content
@@ -626,7 +663,9 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 			const marker = m as LhMarkerMessage;
 			// UI-only markers: plan blocks, and problem dismissals (the
 			// synthesized conclude pair carries the model's face).
+			// Side questions the learner kept from the tutor are UI-only too.
 			if (marker.customType === "plan-block" || marker.customType === "problem-dismissed") continue;
+			if (marker.customType === "side-question" && !marker.content) continue;
 			// The head supersedes every compaction marker, not only its own
 			// stored position. Without a resolved head, preserve the existing
 			// full-history fallback, including the summary text.
@@ -638,9 +677,23 @@ export function toLlmMessages(messages: readonly AgentMessage[]): Message[] {
 			});
 			continue;
 		}
-		// Strip app-only id/CLI context metadata: the wire carries the native shape only.
-		const { id: _id, cliContextWindow: _cliContextWindow, ...native } = m as LhMessage;
-		out.push(native as Message);
+		// Strip app-only record fields (id, attachment ids, CLI context
+		// metadata): the wire carries the native shape only.
+		const { id: _id, attachmentIds, cliContextWindow: _cliContextWindow, ...native } = m as LhMessage;
+		if (role !== "user") {
+			out.push(native as Message);
+		} else {
+			// Learner citations are links in the record; the wire carries them
+			// expanded (core/citations.ts) — the one model-facing rewrite.
+			const user = expandUserCitations(native as UserMessage);
+			const parts = attachmentIds?.length ? (opts.attachmentParts?.(attachmentIds) ?? []) : [];
+			if (parts.length > 0) {
+				const text = typeof user.content === "string" ? [{ type: "text" as const, text: user.content }] : user.content;
+				out.push({ ...user, content: [...text, ...parts] });
+			} else {
+				out.push(user);
+			}
+		}
 		// Repair unanswered calls from completed generations, not calls in
 		// failed generations. Pi filters error/aborted assistants itself;
 		// adding results for their unexecuted calls would leave orphans.
@@ -831,7 +884,8 @@ function isDismissedResult(m: LhMessage): boolean {
  *  the wake pipeline holds job deliveries in the steer queue until the
  *  next send. Derived from the tail — no latch to persist or clear; any
  *  user message flips it off by changing the record. */
-export function endsInDismissal(messages: readonly LhMessage[]): boolean {
+export function endsInDismissal(record: readonly LhMessage[]): boolean {
+	const messages = tailIgnoringSideQuestions(record);
 	const last = messages[messages.length - 1];
 	return last !== undefined && isDismissedResult(last);
 }
@@ -839,7 +893,8 @@ export function endsInDismissal(messages: readonly LhMessage[]): boolean {
 /** The recovery click authorizes its immediate replacement turn, not an
  * automatic restart if only the write-ahead error results survived. No new
  * stored latch: explicit input or replacement output changes this tail. */
-export function endsInQuestionRecovery(messages: readonly LhMessage[]): boolean {
+export function endsInQuestionRecovery(record: readonly LhMessage[]): boolean {
+	const messages = tailIgnoringSideQuestions(record);
 	const last = messages[messages.length - 1];
 	return last?.role === "toolResult" && last.isError &&
 		(last.details as { questionRecovery?: unknown } | null)?.questionRecovery === true;
@@ -855,7 +910,7 @@ export function nativeInputCause(message: AgentMessage, history: readonly AgentM
 	if (message.role === "custom") {
 		if (["probe-handoff", "subagent-steer", "subagent-abort"].includes(message.customType)) return "automatic";
 		if (["practice-thinking", "practice-next"].includes(message.customType)) return "learner";
-		return ["graph-context", "plan-block", "problem-dismissed", "compaction"].includes(message.customType) ? "neutral" : "unrecognizable";
+		return ["graph-context", "plan-block", "problem-dismissed", "compaction", "side-question", "side-question-told"].includes(message.customType) ? "neutral" : "unrecognizable";
 	}
 	if (message.role === "toolResult") {
 		if (message.isError && (message.details as { questionRecovery?: unknown } | null)?.questionRecovery === true) {
@@ -906,7 +961,8 @@ export function isEmptyAssistantCompletion(message: AgentMessage): boolean {
 		message.content.every((block) => block.type === "thinking" || (block.type === "text" && !block.text.trim()));
 }
 
-export function needsContinuation(messages: readonly LhMessage[]): boolean {
+export function needsContinuation(record: readonly LhMessage[]): boolean {
+	const messages = tailIgnoringSideQuestions(record);
 	const last = messages[messages.length - 1];
 	if (!last || (last as { role?: string }).role !== "toolResult") return false;
 	// The trailing results batch (contiguous by construction — the agent

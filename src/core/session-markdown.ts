@@ -20,6 +20,7 @@
  * learning evidence); custom markers are invisible, same as the view.
  */
 
+import { citationsToReadableText } from "./citations.ts";
 import type { LhMessage } from "./native-messages.ts";
 import { normalizeQuizType } from "./question-core.ts";
 import {
@@ -177,7 +178,7 @@ export function messageMarkdown(
 
 	if (role === "user") {
 		for (const text of userFacingTextOf((message as { content: unknown }).content)) {
-			parts.push(`### Learner${anchor}\n\n${text.trim()}`);
+			parts.push(`### Learner${anchor}\n\n${citationsToReadableText(text).trim()}`);
 		}
 	} else if (role === "assistant") {
 		for (const text of userFacingTextOf((message as { content: unknown }).content, ctx?.failedOutputCalls ?? failedOutputCallIds([message]))) {

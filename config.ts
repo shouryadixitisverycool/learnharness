@@ -25,6 +25,8 @@ export const PATHS = {
 	data: DATA_ROOT,
 	/** Chat sessions (AI SDK UIMessage transcripts, one JSON file per chat). */
 	chats: path.join(DATA_ROOT, "chats"),
+	/** Session attachments: content-addressed blobs, data/attachments/<sha256><ext>. */
+	attachments: path.join(DATA_ROOT, "attachments"),
 	graph: path.join(DATA_ROOT, "graph"),
 	/** Study time (src/store/study.ts): intervals.jsonl history + open.json timers. */
 	study: path.join(DATA_ROOT, "study"),
@@ -54,7 +56,8 @@ export type ModelRole =
 	| "visualMaker"
 	| "pdfReader"
 	| "extractor"
-	| "auditor";
+	| "auditor"
+	| "sideQuestion";
 
 /** Study-time files: the append-only history and the open-timer working state. */
 export const STUDY_FILES = {
