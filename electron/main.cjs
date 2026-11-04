@@ -735,7 +735,7 @@ async function reachRemoteServer(url) {
 			type: "warning",
 			message: "Can't reach your LearnHarness server",
 			detail: probe.error,
-			buttons: ["Try Again", "Change Server…", "Use This Mac", "Quit"],
+			buttons: ["Try Again", "Change Server…", process.platform === "darwin" ? "Use This Mac" : "Use This Computer", "Quit"],
 			defaultId: 0,
 			cancelId: 3,
 		});
@@ -746,6 +746,8 @@ async function reachRemoteServer(url) {
 		return false;
 	}
 }
+
+const THIS_COMPUTER = process.platform === "darwin" ? "This Mac" : "This Computer";
 
 /** macOS needs an application menu with the Edit roles — without one,
  *  Cmd+C/V/A do nothing in the renderer. Everything else stays minimal. */
@@ -759,12 +761,12 @@ function installMenu() {
 				{ label: "Check for Updates…", click: () => checkForUpdatesFromMenu() },
 				{ type: "separator" },
 				// Self-hosting: local bundled server vs a remote one (docs/self-hosting.md).
-				{ label: remoteServerUrl ? `Server: ${new URL(remoteServerUrl).host}` : "Server: This Mac", enabled: false },
+				{ label: remoteServerUrl ? `Server: ${new URL(remoteServerUrl).host}` : `Server: ${THIS_COMPUTER}`, enabled: false },
 				{ label: "Connect to Server…", click: () => openConnectWindow() },
 				...(remoteServerUrl
 					? [
 						{ label: "Sign Out of Server", click: () => void signOutOfServer() },
-						{ label: "Use This Mac Instead", click: () => switchServer({ mode: "local" }) },
+						{ label: `Use ${THIS_COMPUTER} Instead`, click: () => switchServer({ mode: "local" }) },
 					]
 					: []),
 				{ type: "separator" },
@@ -925,6 +927,21 @@ async function main() {
 	ipcMain.handle("lh:update:check", (event) => {
 		if (!trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender)) || !trustedSender(event, new URL(url).origin, BrowserWindow)) throw new Error("Untrusted desktop request.");
 		checkForUpdates({ manual: true });
+	});
+
+	// Settings → General → Server: the menu's server items, reachable on
+	// every platform (Linux and Windows windows hide the menu bar).
+	const trustedSettingsSender = (event) => trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender)) && trustedSender(event, new URL(url).origin, BrowserWindow);
+	ipcMain.handle("lh:server:current", (event) => {
+		if (!trustedSettingsSender(event)) throw new Error("Untrusted desktop request.");
+		return remoteServerUrl ? { mode: "remote", url: remoteServerUrl } : { mode: "local" };
+	});
+	ipcMain.handle("lh:server:control", async (event, op) => {
+		if (!trustedSettingsSender(event)) throw new Error("Untrusted desktop request.");
+		if (op === "connect") openConnectWindow();
+		else if (op === "sign-out") await signOutOfServer();
+		else if (op === "local" && remoteServerUrl) setTimeout(() => switchServer({ mode: "local" }), 100);
+		else throw new Error("Unknown server request.");
 	});
 
 	// Sidebar-at-narrow-window (owner, 2026-09-17): the renderer auto-closes

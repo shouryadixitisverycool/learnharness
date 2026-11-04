@@ -87,6 +87,13 @@ declare global {
 			/** Explicit manual check also downloads and stages available updates. */
 			checkForUpdates?: () => Promise<void>;
 			installUpdate?: () => void;
+			/** The self-hosted server choice (Settings → General → Server). */
+			server?: {
+				current: () => Promise<{ mode: "local" } | { mode: "remote"; url: string }>;
+				connect: () => Promise<void>;
+				signOut: () => Promise<void>;
+				useLocal: () => Promise<void>;
+			};
 			onOpenSettings?: (cb: (section: string) => void) => () => void;
 		};
 	}
