@@ -13,11 +13,14 @@ export function usePopoverDismiss(
 	rootRef: RefObject<HTMLElement | null>,
 	open: boolean,
 	close: () => void,
+	insideSelector?: string,
 ): void {
 	useEffect(() => {
 		if (!open) return;
 		const onPointerDown = (e: PointerEvent) => {
-			if (rootRef.current && !rootRef.current.contains(e.target as Node)) close();
+			const target = e.target as Element;
+			if (rootRef.current?.contains(target) || insideSelector && target.closest(insideSelector)) return;
+			close();
 		};
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key === "Escape") {
@@ -34,5 +37,5 @@ export function usePopoverDismiss(
 			document.removeEventListener("pointerdown", onPointerDown);
 			document.removeEventListener("keydown", onKeyDown);
 		};
-	}, [open, close, rootRef]);
+	}, [open, close, rootRef, insideSelector]);
 }

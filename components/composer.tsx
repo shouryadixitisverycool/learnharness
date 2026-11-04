@@ -180,7 +180,7 @@ export function Composer({
 				}}
 				placeholder={placeholder}
 				autoFocus={autoFocus}
-				className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
+				className="field-sizing-content lh-input max-h-48 min-h-10 flex-1 max-sm:min-h-12 resize-none bg-transparent px-2.5 py-2 outline-none placeholder:text-muted-foreground"
 			/>
 			{/* The button follows the text (owner report 2026-10-03): while
 				 a turn runs WITH text typed it stays the SEND affordance
@@ -201,7 +201,7 @@ export function Composer({
 						type="submit"
 						data-testid="next-problem-button"
 						aria-label="Next problem"
-						className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-green-600 px-4 font-ui text-xs font-medium uppercase tracking-wide text-white transition-colors hover:bg-green-500"
+						className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-[10px] bg-green-600 max-sm:h-auto max-sm:min-h-12 px-4 font-ui text-xs font-medium uppercase tracking-wide text-white transition-colors hover:bg-green-500"
 					>
 						Next problem
 						<ArrowRightIcon className="size-4" />
@@ -212,7 +212,7 @@ export function Composer({
 						aria-label={busy && !canSend ? "Stop" : "Send"}
 						disabled={!busy && !canSend}
 						className={cn(
-							"flex size-10 shrink-0 items-center justify-center rounded-[10px] transition-colors",
+							"flex size-10 shrink-0 items-center justify-center rounded-[10px] transition-colors max-sm:size-12",
 							busy && !canSend
 								? "bg-secondary text-foreground hover:bg-accent"
 								: "bg-primary text-primary-foreground hover:opacity-90 disabled:opacity-40",

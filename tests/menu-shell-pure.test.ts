@@ -61,11 +61,18 @@ describe("computeMenuPlacement — cap + position", () => {
 		assert.equal(p.maxHeight, 248);
 	});
 
-	it("never crushes below the usability floor, even against a tiny side", () => {
-		// Anchor 30px above the bottom, both sides thin: capped to the
-		// floor, not a 2px sliver — the cap overflows rather than crushes.
+	it("keeps a menu inside a short viewport, including with the phone keyboard open", () => {
 		const p = computeMenuPlacement(rect(30, 60), viewport(90), 300, "down", "right");
-		assert.equal(p.maxHeight, 96);
+		assert.equal(p.maxHeight, 74);
+		assert.equal(p.style.top, 8);
+	});
+	it("clamps wide menus away from either phone edge", () => {
+		for (const align of ["left", "right"] as const) {
+			for (const anchor of [{ top: 10, bottom: 40, left: 0, right: 30 }, { top: 10, bottom: 40, left: 320, right: 360 }]) {
+				const p = computeMenuPlacement(anchor, { width: 360, height: 500 }, 200, "down", align, 352);
+				assert.equal(p.style[align], 8);
+			}
+		}
 	});
 
 	it("up-side menus anchor their BOTTOM above the anchor's top", () => {

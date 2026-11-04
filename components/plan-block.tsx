@@ -885,7 +885,7 @@ export function PlanPopup({ messages, onClose }: { messages: readonly PopupMessa
 			// SESSION-SCOPED (absolute, not fixed): the chat page mounts this
 			// INSIDE the session-area div — below the drag bar, right of the
 			// sidebar. 80% + blur: the transcript ghosts through.
-			className="absolute inset-0 z-40 flex flex-col bg-background/80 p-4 backdrop-blur-sm"
+			className="lh-plan-popup absolute inset-0 z-40 flex flex-col bg-background/80 p-4 backdrop-blur-sm"
 			role="dialog"
 			aria-modal="true"
 			aria-label="The full plan"

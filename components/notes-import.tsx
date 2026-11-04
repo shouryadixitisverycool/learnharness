@@ -103,9 +103,9 @@ export function NotesImportControl({ importing, onImportFiles }: { importing: bo
 			<input ref={filesRef} type="file" multiple accept=".md,.markdown,.txt,.pdf" className="hidden" onChange={onChange} />
 			<input ref={folderRef} type="file" {...{ webkitdirectory: "" }} className="hidden" onChange={onChange} />
 			<Hint label="Import notes into the graph" side="bottom">
-				<button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu" data-testid="import-notes"
+				<button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu" data-testid="import-notes" aria-label={importing ? "Importing notes" : "Import notes"}
 					className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent">
-					<UploadIcon className="size-3" /><span className="lh-chrome-label">{importing ? "Importing…" : "Import notes…"}</span>
+					<UploadIcon className="size-3" /><span className="lh-chrome-label lh-header-label">{importing ? "Importing…" : "Import notes…"}</span>
 				</button>
 			</Hint>
 			{open && (

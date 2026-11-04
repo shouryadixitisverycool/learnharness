@@ -556,7 +556,7 @@ function QuestionDockForm({
 	}, [kbdIdx]);
 
 	return (
-		<div ref={rootRef} data-testid="question-dock">
+		<div ref={rootRef} data-testid="question-dock" className="lh-question-dock">
 			{/* Question area — scrolls internally if very tall; the bottom row stays put.
 			    Capped by the measured column (--dock-max-h; the old fixed 55dvh cut
 			    long questions short — owner round, 2026-10-05). */}

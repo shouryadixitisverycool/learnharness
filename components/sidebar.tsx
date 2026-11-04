@@ -92,7 +92,8 @@ declare global {
 				current: () => Promise<{ mode: "local" } | { mode: "remote"; url: string }>;
 				connect: () => Promise<void>;
 				signOut: () => Promise<void>;
-				useLocal: () => Promise<void>;
+				/** Absent in the Android app: the phone runs no local server. */
+				useLocal?: () => Promise<void>;
 			};
 			onOpenSettings?: (cb: (section: string) => void) => () => void;
 		};
@@ -147,18 +148,18 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
 		void window.lh?.getZoom?.().then(setZoomVar);
 
 		const stored = localStorage.getItem(STORAGE_KEY);
-		// Default: open (first run introduces the sidebar). On the iPhone the
-		// sidebar covers the page, so every launch starts on the page itself.
-		setOpen(IS_IOS_APP ? false : stored === null ? true : stored === "1");
+		// Default: open (first run introduces the sidebar). On the iPhone and
+		// on phone-width screens the sidebar covers the page, so every launch
+		// starts on the page itself.
+		setOpen(IS_IOS_APP || window.innerWidth < 640 ? false : stored === null ? true : stored === "1");
 		setMounted(true);
 		return () => off?.();
 	}, []);
-
-	// iPhone: the sidebar is a slide-over, so picking a session (or any
-	// navigation) closes it and shows the page that was chosen.
+	// iPhone and phone widths: the sidebar is a slide-over, so picking a
+	// session (or any navigation) closes it and shows the page that was chosen.
 	const pathname = usePathname();
 	useEffect(() => {
-		if (IS_IOS_APP) setOpen(false);
+		if (IS_IOS_APP || window.innerWidth < 640) setOpen(false);
 	}, [pathname]);
 
 	// Narrow-window auto-close/auto-restore (see SIDEBAR_AUTOCLOSE note):
@@ -680,6 +681,7 @@ function SessionsSidebar() {
 		<aside
 			className={cn("lh-sidebar sidebar-motion shrink-0 overflow-hidden duration-200", open ? "w-72" : "w-0")}
 			aria-hidden={!open}
+			inert={!open}
 		>
 			<div className="flex h-full w-72 flex-col border-r bg-background">
 				{/* LH wordmark — the owner's header; close toggle sits at the edge.
@@ -976,8 +978,12 @@ function SessionsSidebar() {
 
 /** The app frame: sidebar inline + content. Rendered once in the root layout. */
 export function AppShell({ children }: { children: React.ReactNode }) {
+	const { open, toggle } = useSidebar();
 	return (
 		<SettingsDialogProvider>
+			{/* Phone-width backdrop: tap outside the sidebar to close it. The
+			    iPhone app has its own (.lh-ios-backdrop in SessionsSidebar). */}
+			{open && !IS_IOS_APP && <button type="button" aria-label="Close navigation" className="fixed inset-0 z-30 bg-black/60 sm:hidden" onClick={toggle} />}
 			<SessionsSidebar />
 			<FilePathDropZone className="relative min-w-0 flex-1">{children}</FilePathDropZone>
 			{/* The single document-level keydown listener (keyboard wave A) —

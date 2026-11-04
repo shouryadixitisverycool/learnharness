@@ -296,7 +296,7 @@ export function ChainTableBody({
 		sort.col !== col ? null : sort.dir === 1 ? <ChevronUpIcon className="size-3" /> : <ChevronDownIcon className="size-3" />;
 
 	return (
-		<div ref={tableRef} tabIndex={-1} data-testid="chain-table" className="relative flex h-full min-h-0 flex-col outline-none [&_[data-chain-nav-active=true]]:bg-accent/50 [&_[data-chain-nav-row]]:outline-none [&_[data-chain-nav-row]]:scroll-mt-8 [&_[data-chain-nav-row]]:scroll-mb-16">
+		<div ref={tableRef} tabIndex={-1} data-testid="chain-table" className="lh-chain-table relative flex h-full min-h-0 flex-col outline-none [&_[data-chain-nav-active=true]]:bg-accent/50 [&_[data-chain-nav-row]]:outline-none [&_[data-chain-nav-row]]:scroll-mt-8 [&_[data-chain-nav-row]]:scroll-mb-16">
 			{/* THE shared top bar (standardization ruling): drag mechanics,
 			    sidebar reopen, traffic-light gutter — the same element as every
 			    chat surface. NO TITLE (owner round 11, 2026-10-05): the serif
@@ -309,8 +309,8 @@ export function ChainTableBody({
 					{chains.length} {chains.length === 1 ? "chain" : "chains"} · {nodes.length} {nodes.length === 1 ? "node" : "nodes"}
 				</span>
 				{onOrganizationChange && <button type="button" aria-label="Add folder" data-testid="add-source-folder"
-					onClick={() => setCreatingFolder(true)} className="lh-no-drag rounded-lg p-2 text-muted-foreground hover:bg-accent"><FolderPlusIcon className="size-4" /></button>}
-				<div className="relative shrink-0">
+					onClick={() => setCreatingFolder(true)} className="lh-add-source-folder lh-no-drag rounded-lg p-2 text-muted-foreground hover:bg-accent"><FolderPlusIcon className="size-4" /></button>}
+				<div className="lh-chain-search relative shrink-0">
 					<SearchIcon className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
 					<input
 						ref={searchRef}
@@ -328,7 +328,7 @@ export function ChainTableBody({
 					data-testid="chain-table-close"
 					onClick={onClose}
 					aria-label="Close chains"
-					className="lh-no-drag flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-card/80 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+					className="lh-chain-table-close lh-no-drag flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-card/80 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
 				>
 					<XIcon className="size-4" />
 				</button>
@@ -358,7 +358,7 @@ export function ChainTableBody({
 						data-testid="sort-props"
 						onClick={() => onSort("props")}
 						aria-sort={sort.col === "props" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
-						className="flex w-14 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground"
+						className="lh-chain-column-props flex w-14 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground"
 					>
 						Props {dirIcon("props")}
 					</button>
@@ -367,7 +367,7 @@ export function ChainTableBody({
 						data-testid="sort-created"
 						onClick={() => onSort("created")}
 						aria-sort={sort.col === "created" ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
-						className="flex w-20 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground"
+						className="lh-chain-column-created flex w-20 shrink-0 items-center justify-end gap-1 text-right transition-colors hover:text-foreground"
 					>
 						Created {dirIcon("created")}
 					</button>
@@ -435,10 +435,10 @@ export function ChainTableBody({
 									? <EditableSourceName name={group.label ?? ""} onSave={(name) => onOrganizationChange({ action: "rename-source", id: group.birth!, name })} />
 									: <span className="min-w-0 flex-1 truncate text-sm font-medium">{group.label ?? <span className="text-muted-foreground/60">unlabeled</span>}</span>}
 								{group.kind === "notes" && <span className="text-[11px] uppercase tracking-widest text-muted-foreground/60">notes</span>}
-								<span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+								<span className="lh-chain-column-props w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
 									{group.nodeIds.length}
 								</span>
-								<span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+								<span className="lh-chain-column-created w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
 									{group.newestCreatedAt.slice(0, 10)}
 								</span>
 							</SourceDragRow>
@@ -516,10 +516,10 @@ export function ChainTableBody({
 														);
 													})}
 												</span>
-												<span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+												<span className="lh-chain-column-props w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
 													{memberIds.length}
 												</span>
-												<span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
+												<span className="lh-chain-column-created w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
 													{dateOf(chain.conclusion)}
 												</span>
 											</div>
@@ -549,8 +549,8 @@ export function ChainTableBody({
 															<span className="min-w-0 flex-1 text-xs leading-relaxed text-muted-foreground">
 																{node.statement}
 															</span>
-															<span className="w-14 shrink-0" />
-															<span className="w-20 shrink-0" />
+															<span className="lh-chain-column-props w-14 shrink-0" />
+															<span className="lh-chain-column-created w-20 shrink-0" />
 														</div>
 													);
 												})}
