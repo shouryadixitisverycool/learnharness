@@ -5,6 +5,7 @@ import { calculateCost, type Usage } from "@earendil-works/pi-ai";
 import { piModels } from "../src/agent/models.ts";
 import { callCost, jobCost } from "../src/server/pricing.ts";
 import { accumulateJobUsage, piUsageToStep } from "../src/core/contracts/jobs.ts";
+import { isCliProvider } from "../src/core/contracts/cursor.ts";
 
 const models = piModels().getProviders().flatMap((p) => piModels().getModels(p.id));
 const nativeUsage = (input: number): Usage => ({ input, output: 1_000, cacheRead: 10_000, cacheWrite: 2_000, cacheWrite1h: 500, totalTokens: input + 13_000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
@@ -18,7 +19,7 @@ test("API catalog models price through Pi at every tier boundary; native CLI sta
 			const usage = nativeUsage(input);
 			const call = Object.freeze(saved(usage));
 			const before = structuredClone(call);
-			const expected = model.provider === "claude-code" ? null : calculateCost(model, usage).total;
+			const expected = isCliProvider(model.provider) ? null : calculateCost(model, usage).total;
 			assert.equal(callCost(call, `${model.provider}:${model.id}`), expected, `${model.provider}:${model.id} input=${input}`);
 			assert.deepEqual(call, before);
 		}
