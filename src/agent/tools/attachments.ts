@@ -40,16 +40,25 @@ export interface SessionAttachment {
 	path: string;
 }
 
-function describe(a: AttachmentRecord): string {
+/** Who reads the manifest: the tutor, or the side agent (#16), which has
+ *  no \`pdf\` job and never sees images on the transcript's messages. */
+export type AttachmentsReader = "tutor" | "side";
+
+function describe(a: AttachmentRecord, reader: AttachmentsReader): string {
 	const size = formatSize(a.bytes);
-	if (a.kind === "pdf") return `PDF, ${a.pages ?? "?"} pages, ${size} → pdf_info / pdf_search / pdf_extract; the \`pdf\` job for figures and equations`;
+	if (a.kind === "pdf") {
+		const tools = `PDF, ${a.pages ?? "?"} pages, ${size} → pdf_info / pdf_search / pdf_extract`;
+		return reader === "tutor" ? `${tools}; the \`pdf\` job for figures and equations` : tools;
+	}
 	if (a.kind === "epub") return `EPUB${a.title ? ` "${a.title}"` : ""}, ${a.chapters ?? "?"} chapters, ${size} → epub_info / epub_search / epub_read`;
-	return `image, ${size} → \`read\` this path to look at it (also shown on the message it was sent with, when there is one)`;
+	return reader === "tutor"
+		? `image, ${size} → \`read\` this path to look at it (also shown on the message it was sent with, when there is one)`
+		: `image, ${size} → \`read\` this path to look at it`;
 }
 
-export function attachmentsPromptSection(attachments: readonly SessionAttachment[]): string {
+export function attachmentsPromptSection(attachments: readonly SessionAttachment[], reader: AttachmentsReader = "tutor"): string {
 	if (attachments.length === 0) return "";
-	const lines = attachments.map((a) => `- ${a.record.name} — ${describe(a.record)} — path: ${a.path}`);
+	const lines = attachments.map((a) => `- ${a.record.name} — ${describe(a.record, reader)} — path: ${a.path}`);
 	return [
 		"## Session attachments",
 		"",
