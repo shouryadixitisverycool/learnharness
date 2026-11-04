@@ -39,6 +39,7 @@ import {
 	type SideQuestionDetails,
 	type SideQuestionInput,
 } from "../core/side-questions.ts";
+import { sessionAttachments } from "./attachments.ts";
 import { awaitCompaction } from "./compaction.ts";
 import { providerKeyPresent } from "./keys.ts";
 import { refreshConnectionCatalog } from "./model-catalog.ts";
@@ -134,6 +135,7 @@ export async function handleSideQuestion(chatId: string, body: unknown, deps: Si
 	const current = stores.chatStore.getChat(chatId);
 	if (!current) return Response.json({ error: "Unknown chat" }, { status: 404 });
 	const userMessage = sideUserMessage(sideTranscript(current.messages), input);
+	const attachments = sessionAttachments(current);
 
 	// Frames buffer until the client reads; a disconnect only stops delivery.
 	let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
@@ -156,6 +158,7 @@ export async function handleSideQuestion(chatId: string, body: unknown, deps: Si
 				engine,
 				userMessage,
 				chatId,
+				attachments,
 				onText: (delta) => send({ type: "text", delta }),
 				onTool: (name, label) => send({ type: "tool", name, label }),
 			});

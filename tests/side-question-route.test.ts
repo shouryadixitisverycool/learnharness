@@ -130,4 +130,18 @@ describe("POST /api/chats/[id]/side-question", () => {
 		assert.ok(entry);
 		assert.deepEqual(await entry.answer, { question: "Why multiply?", answer: "Multiply the rates.", tell: true, note: "Unsure about the chain rule." });
 	});
+
+	it("hands the side agent the session's active attachments, not detached ones", async () => {
+		const id = chat();
+		const at = "2026-11-04T00:00:00.000Z";
+		chatStore.addAttachments(id, [
+			{ id: "att_live", name: "Calculus.pdf", kind: "pdf", mimeType: "application/pdf", bytes: 2048, file: "live.pdf", addedAt: at, pages: 12 },
+			{ id: "att_gone", name: "Removed.epub", kind: "epub", mimeType: "application/epub+zip", bytes: 2048, file: "gone.epub", addedAt: at, chapters: 3, detachedAt: at },
+		]);
+		const s = scripted(answered());
+		await (await handleSideQuestion(id, body("thread_attached"), s)).text();
+		// prompts[0] holds every message's content, the leading system message first.
+		assert.match(s.prompts[0]!, /- Calculus\.pdf — PDF, 12 pages/);
+		assert.doesNotMatch(s.prompts[0]!, /Removed\.epub/);
+	});
 });
