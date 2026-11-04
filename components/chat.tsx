@@ -2,6 +2,7 @@
 
 import { createContext, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useChatSession } from "@/components/session";
+import { useStudyTracker } from "@/components/use-study-tracker";
 import { visibleQueuedSteers } from "@/components/session-core";
 import { SetupDialog } from "@/components/setup-dialog";
 import { Hint } from "@/components/ui/hint";
@@ -13,7 +14,7 @@ import {
 	ConversationEmptyState,
 	ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import { AssistantTextResponse, Message, MessageContent } from "@/components/ai-elements/message";
 import { PathText } from "@/components/file-path-chip";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
@@ -36,8 +37,10 @@ import { useFieldCycle } from "@/components/field-cycle";
 import { JobsContext } from "@/components/jobs-context";
 import { StatsBar } from "@/components/stats-bar";
 import { useServerEvent, useServerResync } from "@/components/server-events";
+import { useSessionTitle } from "@/components/session-title";
 import {
 	isProviderKeyRefusal,
+	chatHasStarted,
 	firstSourceTextParts,
 	cliContextWindowOf,
 	messageAnchorId,
@@ -53,15 +56,26 @@ import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
 import { ArrowRightIcon, DumbbellIcon, WaypointsIcon } from "lucide-react";
-import type { PlanBlockData } from "@/src/core";
+import type { PlanBlockData, SideQuestionDetails } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { SessionFind } from "@/components/session-find";
 import { SessionMessageNavigation } from "@/components/session-navigation";
+import { SelectionToolbar } from "@/components/selection-toolbar";
+import { createCiteAction, type CitationEditTarget } from "@/components/citation-actions";
+import { CitationActionsContext, type CitationActions } from "@/components/citation-chip";
+import { CitationCommentPopover } from "@/components/citation-comment-popover";
+import { revealCitationSource } from "@/components/citation-source";
+import { createSideQuestionActions, parseBtw, SideThreadBody, SideThreadPanel, SideThreadPopover } from "@/components/side-thread";
+import { useSideThread } from "@/components/use-side-thread";
+import { SideQuestionChip } from "@/components/side-question-chip";
+import { useRouter } from "next/navigation";
 import { PracticeDock } from "@/components/practice-dock";
 import { ThinkingCard, type PracticeThinkingData } from "@/components/practice-cards";
 import { GraphContextCard, type GraphContextData } from "@/components/graph-context-card";
 import { TopBar } from "@/components/top-bar";
-import type { ArtifactPartProps, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, TurnUsage, SessionPricing } from "@/src/core";
+import type { ArtifactPartProps, AttachmentRecord, JobRecord, Phase3, QuestionAnswerData, QuestionFormDraft, TurnUsage, SessionPricing } from "@/src/core";
+import { AttachmentChips, ContextAttachControl, mergeAttachments, SessionFilesControl, useAttachmentDraft } from "@/components/attachments";
+import { ComposerActions } from "@/components/composer-actions";
 import type { LhViewMessage } from "@/src/core";
 import { PhaseChip, PhaseDivider } from "@/components/phase-divider";
 import {
@@ -77,26 +91,29 @@ import {
 	malformedQuestionsOf,
 	dismissedAnswer,
 	endsInFailedTurn,
+	askBeforeCheckVisible,
 	findPendingToolCall,
+	pendingQuestionCount,
 	phaseAt3,
 	phaseTimeline,
 	teachStepIndex,
 	toolQuestionKind,
+	questionAllowsAskBefore,
 	questionNeedsReveal,
 } from "@/src/core";
 import { ReadingThinkingField } from "@/components/reading-thinking";
 import { postToNative, useNativeShell } from "@/components/native-shell";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
+import { useAppearance } from "@/components/settings/appearance";
 
-/** One width for everything: transcript, cards, and the bottom blob share this column. */
 /**
- * Width tokens (wave-5 reskin, owner decision): the teaching PROSE spans the
- * full session width with a thin px-6 margin; the composer/question DOCK is
- * deliberately narrower (~46rem centered) per the reference. Same ELEMENT,
- * same place — width polish only.
+ * Width tokens: the composer/question DOCK is a centered 46rem column, and
+ * the transcript reads in the same column (#136): full-width prose ran ~300
+ * characters per line on a 2560px window. Sharing the token keeps the text
+ * edges flush with the composer's, and the plan marginalia keeps the flank.
  */
-const COLUMN = "mx-auto w-full max-w-none px-6";
 const DOCK = "mx-auto w-full max-w-[46rem] px-4";
+const COLUMN = DOCK;
 // The DOCK container's fixed width (46rem) and the plan marginalia's
 // geometry (owner, plan-placement round): the bare diagram sits in the
 // dock band's RIGHT flank — MARGIN_GAP from the DOCK container's edge and
@@ -223,6 +240,7 @@ export function Chat({
 	initiallyCompacting = false,
 	initialConfigured = false,
 	kind = "teach",
+	initialAttachments = [],
 }: {
 	chatId: string;
 	title: string;
@@ -246,7 +264,24 @@ export function Chat({
 	 *  it (BYOK, owner 2026-09-22). The server gate stays the truth; this
 	 *  only decides whether the pill rides the composer. */
 	initialConfigured?: boolean;
+	/** The session's context attachments (2026-10-29) — names for the
+	 *  transcript's chips; grows as the composer uploads more. */
+	initialAttachments?: AttachmentRecord[];
 }) {
+	// Session context attachments: the record's list + the composer's draft.
+	const [sessionAttachments, setSessionAttachments] = useState(initialAttachments);
+	const attachmentDraft = useAttachmentDraft((records) => setSessionAttachments((prev) => mergeAttachments(prev, records)));
+	const attachmentItem = (id: string) => {
+		const a = sessionAttachments.find((r) => r.id === id);
+		return { id, name: a?.name ?? "attachment", detached: !!a?.detachedAt };
+	};
+	// The top bar's session-files panel; a transcript chip opens it on its file.
+	const [filesOpen, setFilesOpen] = useState(false);
+	const [filesHighlight, setFilesHighlight] = useState<string | null>(null);
+	const onFilesOpenChange = (open: boolean) => {
+		setFilesOpen(open);
+		if (!open) setFilesHighlight(null);
+	};
 	// Reattach plumbing (background-turn runner wave): the hook holds the
 	// settled terminal's callback — a stable ref assigned below, once
 	// syncFromServer exists (refs, not closures: no stale capture).
@@ -260,6 +295,7 @@ export function Chat({
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
 	const { messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
+	useStudyTracker(chatId, chatHasStarted(nativeMessages));
 
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
 	const scrollContextRef = useRef<StickToBottomContext | null>(null);
@@ -280,9 +316,9 @@ export function Chat({
 	// title opens edit mode with everything selected — typing replaces, arrows
 	// move inside. Enter or a click away commits (PUT /api/chats/:id); Escape
 	// discards. The server never bumps updatedAt on a rename (sidebar order
-	// must not churn), and the sidebar patch is instant via the window event —
-	// its 2.5s poll is only a backstop.
-	const [titleText, setTitleText] = useState(title);
+	// must not churn). Local renames patch instantly; server-generated titles
+	// and other windows arrive through chats-changed notifications.
+	const [titleText, setTitleText] = useSessionTitle(chatId, title);
 	const [renaming, setRenaming] = useState(false);
 	const [titleDraft, setTitleDraft] = useState("");
 	const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -307,7 +343,7 @@ export function Chat({
 				console.error("rename failed:", err); // keep the old title
 			}
 		},
-		[chatId, titleText],
+		[chatId, titleText, setTitleText],
 	);
 
 	// Select-all when edit mode opens: the click means "replace", so the
@@ -340,11 +376,11 @@ export function Chat({
 	useEffect(() => {
 		const onRenamed = (e: Event) => {
 			const { id, title } = (e as CustomEvent<{ id: string; title: string }>).detail;
-			if (id === chatId) setTitleText((prev) => (title !== prev ? title : prev));
+			if (id === chatId) setTitleText(title);
 		};
 		window.addEventListener("lh:chat-renamed", onRenamed);
 		return () => window.removeEventListener("lh:chat-renamed", onRenamed);
-	}, [chatId]);
+	}, [chatId, setTitleText]);
 
 	// The Esc chain's last link: abort the turn. The background runner
 	// decoupled turns from views, so the abort is ALWAYS the remote kill
@@ -380,6 +416,7 @@ export function Chat({
 		const onAbort = () => {
 			const target = escAbortTarget({
 				abortAsk: abortAskRef.current !== null,
+				sideThread: sideThreadOpenRef.current,
 				mermaidFocus: mermaidFocusRef.current !== null || figureFocusRef.current !== null,
 				planOpen: planOpenRef.current,
 				setupOpen: setupOpenRef.current,
@@ -387,7 +424,8 @@ export function Chat({
 				problem: activeProblemRef.current !== null,
 				busy: busyRef.current,
 			});
-			if (target === "question") setAbortAsk("question");
+			if (target === "side-thread") closeSideThreadRef.current();
+			else if (target === "question") setAbortAsk("question");
 			else if (target === "problem") setAbortAsk("problem");
 			else if (target === "turn") setAbortAsk("turn");
 			else if (target === "mermaid") setMermaidFocus(null);
@@ -413,8 +451,10 @@ export function Chat({
 			const p = pendingRef.current;
 			if (p) {
 				const question = (p.input as { question?: string } | null)?.question ?? "";
-				const reading = readingThinkingRef.current.trim() || undefined;
-				clearReadingThinking();
+				// Notes ride a teach-check dismissal. Another open question
+				// (a prediction, a probe) leaves them for the check's return.
+				const reading = requiresRevealRef.current ? readingThinkingRef.current.trim() || undefined : undefined;
+				if (requiresRevealRef.current) clearReadingThinking();
 				const answer = dismissedAnswer(toolQuestionKind(p.tool), question);
 				void dismissQuestion(
 					p.toolCallId,
@@ -457,6 +497,8 @@ export function Chat({
 	// listener is mount-scoped; the value it needs is render-scoped).
 	const pendingRef = useRef(pending);
 	pendingRef.current = pending;
+	// The abort confirm reads this after the render that computed it.
+	const requiresRevealRef = useRef(false);
 
 	// THE ACTIVE PRACTICE PROBLEM (practice sessions, 2026-10-04): the
 	// same dock-ownership rule as a pending question — an active problem
@@ -517,13 +559,17 @@ export function Chat({
 	// ends at the question call), so the session's current phase IS the
 	// question's phase.
 	const requiresReveal = pending !== null && questionNeedsReveal(pending.tool, pending.input, phaseAt3(messages));
+	requiresRevealRef.current = requiresReveal;
 
 	/* The READING-THINKING channel (owner 2026-10-03): a draft field for
 	 * thinking while reading the teaching prose, mounted while a check waits
 	 * behind its reveal, riding the check answer (or its dismissal) as the
-	 * separate `readingThinking` field. Reset per pending question. */
+	 * separate `readingThinking` field. Reset per pending question, except
+	 * across an ask-before-check: that closes the check and the teacher
+	 * poses it again, and the notes stay for that return. */
 	const [readingThinkingSeed, setReadingThinkingSeed] = useState({ questionId: null as string | null, value: "", revision: 0 });
 	const readingThinkingRef = useRef("");
+	const preserveReadingRef = useRef(false);
 
 	// ⌘T (toggle-user-thinking, owner round 2026-10-07): set EVERY user
 	// thinking row to one state — transcript rows default open, so the
@@ -537,6 +583,7 @@ export function Chat({
 		readingThinkingRef.current = v;
 	}, []);
 	const clearReadingThinking = useCallback(() => {
+		preserveReadingRef.current = false;
 		readingThinkingRef.current = "";
 		setReadingThinkingSeed((previous) => ({ ...previous, value: "", revision: previous.revision + 1 }));
 	}, []);
@@ -544,7 +591,10 @@ export function Chat({
 	useLayoutEffect(() => {
 		// Different calls never share a draft; a failed submission of THIS
 		// call restores the reading channel alongside the form's snapshot.
-		const value = pendingQuestionId ? questionDraft(pendingQuestionId)?.readingThinking ?? "" : "";
+		// An ask-before-check (#138) carries the notes to the re-posed check.
+		const value = preserveReadingRef.current
+			? readingThinkingRef.current
+			: pendingQuestionId ? questionDraft(pendingQuestionId)?.readingThinking ?? "" : "";
 		readingThinkingRef.current = value;
 		setReadingThinkingSeed((previous) =>
 			previous.questionId === pendingQuestionId && previous.value === value
@@ -591,11 +641,14 @@ export function Chat({
 		return () => { openingMountedRef.current = false; };
 	}, []);
 
-	const deliverOpeningPrompt = useCallback((prompt: string) => {
+	/** The opening's attachments (uploaded on the new-session page; ids only). */
+	const openingAttachmentIdsRef = useRef<string[]>([]);
+	const deliverOpeningPrompt = useCallback((prompt: string, attachmentIds: string[] = openingAttachmentIdsRef.current) => {
 		openingDraftRef.current = prompt;
+		openingAttachmentIdsRef.current = attachmentIds;
 		// Persist uncertainty BEFORE the POST: another mount must restore,
 		// not race the still-arriving request. No storage means no auto-send.
-		if (!stashOpeningPrompt(chatId, prompt, true)) {
+		if (!stashOpeningPrompt(chatId, prompt, true, attachmentIds)) {
 			applyText(prompt);
 			setOpeningError(true);
 			return;
@@ -603,7 +656,7 @@ export function Chat({
 		setOpeningError(false);
 		draftRef.current = prompt; // The existing 503 flow must restore it too.
 		applyText("");
-		void send({ type: "text", text: prompt }, () => {
+		void send({ type: "text", text: prompt, ...(attachmentIds.length ? { attachmentIds } : {}) }, () => {
 			clearOpeningPrompt(chatId);
 			openingDraftRef.current = null;
 			if (draftRef.current === prompt) draftRef.current = null;
@@ -625,6 +678,7 @@ export function Chat({
 			return;
 		}
 		openingDraftRef.current = prompt!;
+		openingAttachmentIdsRef.current = entry?.attachmentIds ?? [];
 		if (entry?.attempted || initiallyInFlight) {
 			applyText(prompt!); // Interrupted start: the learner explicitly resends.
 			return;
@@ -719,6 +773,49 @@ export function Chat({
 	 * is null, and the thinking field is left alone by design. */
 	const dictationWasActiveRef = useRef(false);
 	const composerInputRef = useRef<HTMLDivElement>(null);
+
+	// CITE (2026-10-31): selected tutor text → a citation chip in the
+	// composer, then its comment popover. The transcript's scroll element
+	// arrives late (StickToBottom attaches it), so it is reported up.
+	const [transcriptElement, setTranscriptElement] = useState<HTMLElement | null>(null);
+	const [citationEdit, setCitationEdit] = useState<CitationEditTarget | null>(null);
+	const citeAction = useMemo(
+		() => createCiteAction({ chatId, composer: () => composerInputRef.current, openEditor: setCitationEdit }),
+		[chatId],
+	);
+	// SIDE QUESTIONS (#16): a side thread asked from a selection or /btw;
+	// teaching sessions only. It commits to the record when it closes.
+	const sideThread = useSideThread(chatId);
+	const sideThreadOpen = sideThread.state !== null && sideThread.state.readOnly === undefined;
+	const sideThreadOpenRef = useRef(false);
+	sideThreadOpenRef.current = sideThread.state !== null;
+	const closeSideThreadRef = useRef(sideThread.close);
+	closeSideThreadRef.current = sideThread.close;
+	const sideOpenForActionsRef = useRef(sideThreadOpen);
+	sideOpenForActionsRef.current = sideThreadOpen;
+	const { open: openSideThread, addPassage: addSidePassage } = sideThread;
+	const sideActions = useMemo(
+		() => (kind === "practice" ? [] : createSideQuestionActions({ threadOpen: () => sideOpenForActionsRef.current, open: openSideThread, addPassage: addSidePassage })),
+		[kind, openSideThread, addSidePassage],
+	);
+	// Rebuilt when a thread opens or closes, so the buttons follow (F7).
+	const selectionActions = useMemo(() => [citeAction, ...sideActions], [citeAction, sideActions, sideThreadOpen]);
+	const router = useRouter();
+	const transcriptElementRef = useRef<HTMLElement | null>(null);
+	transcriptElementRef.current = transcriptElement;
+	const citationActions = useMemo<CitationActions>(() => ({
+		editComment: (citation, source) => setCitationEdit({ citation, link: source.link, start: source.start, host: source.host }),
+		openSource: (citation) => {
+			const context = scrollContextRef.current;
+			revealCitationSource({
+				transcript: transcriptElementRef.current,
+				scroll: context ? { scrollRef: context.scrollRef, stopScroll: context.stopScroll } : null,
+				citation,
+				currentChatId: chatId,
+				navigate: (href) => router.push(href),
+			});
+		},
+	}), [chatId, router]);
 	useEffect(() => {
 		if (dictation.active) {
 			dictationWasActiveRef.current = true;
@@ -747,6 +844,7 @@ export function Chat({
 	// server's registry mutex is the structural gate; this is the
 	// affordance).
 	const [compacting, setCompacting] = useState(initiallyCompacting);
+	const [uploading, setUploading] = useState(false);
 	// A failed model response (issue #110): Retry keeps the saved input
 	// and completed work, without another learner message. Offered from
 	// "error" too: a dropped stream leaves the model there, and send()
@@ -970,7 +1068,7 @@ export function Chat({
 	const [dockReserve, setDockReserve] = useState(208);
 	const syncTurns = useCallback(async () => {
 		try {
-			const res = await fetch(`/api/chats/${chatId}`);
+			const res = await fetch(`/api/chats/${chatId}?only=stats`);
 			if (!res.ok) return;
 			const record = (await res.json()) as { turns?: TurnUsage[]; pricing?: SessionPricing };
 			if (Array.isArray(record.turns)) setTurns(record.turns);
@@ -1233,6 +1331,18 @@ export function Chat({
 		void syncFromServer();
 	});
 
+	const openQuestions = pendingQuestionCount(messages);
+	const predictionPending =
+		pending !== null && !requiresReveal && questionAllowsAskBefore(pending.tool, phaseAt3(messages));
+	const onAskBeforeCheck = () => {
+		if (!pending || compacting || busy) return;
+		if (!askBeforeCheckVisible(requiresReveal, predictionPending, openQuestions)) return;
+		const t = textRef.current.trim();
+		if (!t) return;
+		preserveReadingRef.current = true;
+		applyText("");
+		void send({ type: "ask-before-check", toolCallId: pending.toolCallId, text: t });
+	};
 	const onSend = () => {
 		if (pending || compacting) return;
 		/* FINISH DICTATION FIRST (owner, 2026-10-01): a learner who keeps
@@ -1246,7 +1356,7 @@ export function Chat({
 		void dictation.finish().then(doSteerOrSend);
 	};
 	const doSend = () => {
-		if (busy || pending || compacting) return;
+		if (busy || pending || compacting || uploading) return;
 		const t = textRef.current.trim();
 		if (!t) return;
 		if (zeroKeys) {
@@ -1257,13 +1367,30 @@ export function Chat({
 			openModelPicker();
 			return; // No optimistic send and no change to the learner's draft.
 		}
+		// Context attachments upload first (one request per file); the text
+		// stays in the composer until they're on the server.
+		if (attachmentDraft.files.length === 0) {
+			sendText(t, []);
+			return;
+		}
+		setUploading(true);
+		attachmentDraft.upload(chatId).then(
+			(ids) => {
+				setUploading(false);
+				attachmentDraft.clear();
+				sendText(t, ids);
+			},
+			() => setUploading(false), // the control shows the reason; nothing sent
+		);
+	};
+	const sendText = (t: string, attachmentIds: string[]) => {
 		if (openingDraftRef.current !== null) {
-			deliverOpeningPrompt(t);
+			deliverOpeningPrompt(t, [...openingAttachmentIdsRef.current, ...attachmentIds]);
 			return;
 		}
 		draftRef.current = t; // the refusal flow's preserve-and-replay seam
 		applyText("");
-		void send({ type: "text", text: t });
+		void send({ type: "text", text: t, ...(attachmentIds.length ? { attachmentIds } : {}) });
 	};
 
 	/* STEER VS SEND (owner arc 2026-10-03): a send while a turn runs steers
@@ -1279,7 +1406,17 @@ export function Chat({
 		if (pending || compacting) return;
 		const t = textRef.current.trim();
 		if (!t) return;
+		// /btw <question> (#16): a side question, never sent to the tutor —
+		// before both steer and send. Practice sends it as ordinary text.
+		const btw = kind === "practice" ? null : parseBtw(t);
+		if (btw) {
+			applyText("");
+			sideThread.open({ anchor: { kind: "composer" }, question: btw.question });
+			return;
+		}
 		if (busy) {
+			// A steer carries text only: picked files wait for the turn to end.
+			if (attachmentDraft.files.length > 0) return;
 			applyText("");
 			void steer(t);
 			return;
@@ -1305,6 +1442,7 @@ export function Chat({
 			}}
 		>
 		<JobsContext.Provider value={jobs}>
+		<CitationActionsContext.Provider value={citationActions}>
 		{/* The session surface: the transcript column (header + scroller) and
 		    the plan-tree panel as full-height SIBLINGS — the panel spans top to
 		    bottom exactly like the left sidebar, and the header (name + phase
@@ -1387,6 +1525,16 @@ export function Chat({
 							<div className="min-w-4 flex-1" aria-hidden="true" />
 					</>
 					)}
+					{/* Session files (2026-10-29): every kind — the add path while a
+					    question or probe card blocks the composer. */}
+					<SessionFilesControl
+						chatId={chatId}
+						attachments={sessionAttachments}
+						setAttachments={setSessionAttachments}
+						open={filesOpen}
+						onOpenChange={onFilesOpenChange}
+						highlightId={filesHighlight}
+					/>
 					{/* The plan chip (owner, plan-placement round): session-level
 					    structure beside the phase chip — access to the full-DAG popup
 					    at every width; the marginalia is the wide-screen glance view. */}
@@ -1435,7 +1583,8 @@ export function Chat({
 				<div ref={sessionFindScopeRef} className="relative flex min-h-0 flex-1">
 				<Conversation className="h-full min-w-0 flex-1" initial="instant" contextRef={scrollContextRef}>
 					<SessionMessageNavigation />
-					<ConversationContent className="min-h-full gap-0 p-0">
+					<TranscriptElementReporter onElement={setTranscriptElement} />
+					<ConversationContent className="min-h-full gap-0 p-0 [container-type:inline-size]">
 						<div data-session-find-root="" className={`${COLUMN} flex flex-1 flex-col gap-4 pt-4`}>
 							{messages.length === 0 && !busy && (
 								<ConversationEmptyState
@@ -1481,6 +1630,15 @@ export function Chat({
 												return <CompactionCutDivider key={pi} data={part.data as CompactionDividerData} />;
 											case "data-practice-thinking":
 												return <ThinkingCard key={pi} data={part.data as PracticeThinkingData} />;
+											case "data-side-question":
+												return (
+													<SideQuestionChip
+														key={pi}
+														details={part.data as SideQuestionDetails}
+														onOpen={(element) => sideThread.reopenReadOnly(m.id, part.data as SideQuestionDetails, { kind: "element", element })}
+														onTell={() => sideThread.tellTutor(m.id)}
+													/>
+												);
 											case "data-practice-next":
 												// The learner's move-on signal (owner round 16): a compact
 												// centered mono-caps line — chrome, the dismissal register.
@@ -1554,10 +1712,19 @@ export function Chat({
 												<div className="lh-prose whitespace-pre-wrap text-foreground">
 													<PathText text={m.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")} />
 												</div>
+												<AttachmentChips
+													items={m.parts
+														.filter((p) => p.type === "data-attachments")
+														.flatMap((p) => (p.data as { ids: string[] }).ids.map(attachmentItem))}
+													onOpen={(id) => {
+														setFilesHighlight(id);
+														setFilesOpen(true);
+													}}
+												/>
 											</div>
 									) : (
 									<Message from="assistant" className="max-w-full">
-									<MessageContent className="w-full">
+									<MessageContent className="w-full overflow-visible">
 											{m.parts.map((part, pi) => {
 												const isLastPart = mi === messages.length - 1 && pi === m.parts.length - 1;
 												// The step boundary where teaching begins (round 8): when
@@ -1593,7 +1760,7 @@ export function Chat({
 														const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
 														return (
 															<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
-																<MessageResponse>{part.text}</MessageResponse>
+																<AssistantTextResponse>{part.text}</AssistantTextResponse>
 															</div>
 														);
 													}
@@ -1767,6 +1934,9 @@ export function Chat({
 							)
 						)
 					}
+					composerActions={
+						<ComposerActions picker={<ContextAttachControl draft={attachmentDraft} disabled={busy || uploading} lockRemoval={uploading} />} />
+					}
 					composer={
 						nativeShell ? null : <ChatSessionComposer
 							// Stop aborts ANY in-flight turn (stream-reattach wave): the
@@ -1791,6 +1961,24 @@ export function Chat({
 							placeholder={nextReady ? "Ask anything, or press Enter for the next one." : undefined}
 						/>
 					}
+					openQuestions={openQuestions}
+					askComposer={
+						openQuestions === 1 ? (
+							<ChatSessionComposer
+								busy={false}
+								value={textRef.current}
+								revision={composerDraftRevision}
+								onChange={recordComposerText}
+								onSend={onAskBeforeCheck}
+								onStop={() => {}}
+								sendAllowed={!compacting && !busy}
+								// #138's send rule: typed text only (onAskBeforeCheck).
+								dictationActive={false}
+								onEscape={dictation.active ? dictation.cancel : undefined}
+								placeholder="Ask about what you just read…"
+							/>
+						) : null
+					}
 					onSubmitAnswer={(output) => {
 						if (!pending) return;
 						// THE ANSWER IS THE QUESTION CALL'S TOOL RESULT (fork 1, owner
@@ -1800,15 +1988,31 @@ export function Chat({
 						// turn; the teacher's reaction streams below it. Dismissals
 						// ride the same callback (QuestionAnswerData.dismissed). The
 						// reading-thinking draft rides along (owner 2026-10-03) — the
-						// check answer is its only carrier.
+						// check answer is its only carrier. A prediction or probe
+						// answer leaves the notes for the teach check's return.
 						saveQuestionDraft(pending.key, { readingThinking: readingThinkingRef.current });
-						const reading = readingThinkingRef.current.trim() || undefined;
+						const reading = requiresReveal ? readingThinkingRef.current.trim() || undefined : undefined;
+						// The check's answer consumes the notes: stop carrying them.
+						if (requiresReveal) preserveReadingRef.current = false;
 						// The pending-id effect clears this only when the question
 						// actually leaves. An offline preflight keeps the draft visible.
 						submitAnswer(pending.tool, pending.toolCallId, reading ? { ...output, readingThinking: reading } : output, pending.key);
 					}}
 				/>
 				</Conversation>
+				{sideThread.state?.mode === "panel" && (
+					<SideThreadPanel>
+						<SideThreadBody
+							state={sideThread.state}
+							chatId={chatId}
+							onAsk={sideThread.ask}
+							onSetTell={sideThread.setTell}
+							onExpand={sideThread.expand}
+							onClose={sideThread.close}
+							onTellTutor={sideThread.state.readOnly ? () => void sideThread.tellTutor(sideThread.state!.threadId) : undefined}
+						/>
+					</SideThreadPanel>
+				)}
 
 				{/* The session-scoped focuses (chrome-melt wave, 2026-09-19): mounted
 				    INSIDE the session area — absolute inset-0 siblings of the scroller,
@@ -1825,10 +2029,34 @@ export function Chat({
 					/>
 				)}
 				{planOpen && <PlanPopup messages={messages} onClose={() => setPlanOpen(false)} />}
+				<SelectionToolbar viewport={transcriptElement} actions={selectionActions} />
+				{sideThread.state?.mode === "popover" && (
+					<SideThreadPopover
+						state={sideThread.state}
+						chatId={chatId}
+						composer={() => composerInputRef.current}
+						onAsk={sideThread.ask}
+						onSetTell={sideThread.setTell}
+						onExpand={sideThread.expand}
+						onClose={sideThread.close}
+						onTellTutor={sideThread.state.readOnly ? () => void sideThread.tellTutor(sideThread.state!.threadId) : undefined}
+					/>
+				)}
+				{citationEdit && (
+					<CitationCommentPopover
+						key={`${citationEdit.start}:${citationEdit.link}`}
+						target={citationEdit}
+						transcript={transcriptElement}
+						composer={() => composerInputRef.current}
+						onClose={() => setCitationEdit(null)}
+						onSend={onSend}
+					/>
+				)}
 				<AbortTurnDialog mode={abortAsk} onClose={() => setAbortAsk(null)} onConfirm={confirmAbort} busy={busy} />
 				</div>
 			</div>
 		</div>
+		</CitationActionsContext.Provider>
 		</JobsContext.Provider>
 		</SessionMermaidContext.Provider>
 		{/* The BYOK setup flow (owner, 2026-09-22): one mount serves the
@@ -1869,7 +2097,8 @@ export function Chat({
  * is open (a shrinking tail would reintroduce the clamp).
  *
  * Collapse: scroll up past COLLAPSE_DIST and the dock folds into a slim bar;
- * click it (or scroll back to the bottom) to re-expand. The question form
+ * click it to re-expand in place (pinned open until answered), or scroll
+ * back to the bottom. The question form
  * stays MOUNTED while collapsed (hidden, not unmounted) so a half-made
  * selection survives.
  */
@@ -1889,7 +2118,7 @@ export function Chat({
  *  then the session overlays (mermaid paints above plan — later in DOM),
  *  then setup (self-closing — the gate only must not fire), then the
  *  2026-10-02 abort chain proper (question before turn). */
-export type EscAbortTarget = "mermaid" | "plan" | "setup" | "question" | "problem" | "turn" | null;
+export type EscAbortTarget = "side-thread" | "mermaid" | "plan" | "setup" | "question" | "problem" | "turn" | null;
 	/**
  * Does the opening topic still owe its first send? The topic is the
  * server's ?prompt= or the sessionStorage stash. The gate is "no real
@@ -1901,11 +2130,14 @@ export type EscAbortTarget = "mermaid" | "plan" | "setup" | "question" | "proble
  */
 export function initialPromptOwed(messages: readonly { role: string }[], prompt: string | undefined): boolean {
 	if (!prompt) return false;
-	return !messages.some((m) => m.role === "user" || m.role === "assistant");
+	return !chatHasStarted(messages);
 }
 
 export function escAbortTarget(s: {
 	abortAsk: boolean;
+	/** An open side thread (#16, F11): Esc closes (and commits) it before
+	 *  anything else on the ladder. */
+	sideThread?: boolean;
 	mermaidFocus: boolean;
 	planOpen: boolean;
 	setupOpen: boolean;
@@ -1919,6 +2151,7 @@ export function escAbortTarget(s: {
 	busy: boolean;
 }): EscAbortTarget {
 	if (s.abortAsk) return null; // the popup's own Esc — claimed by the dialog
+	if (s.sideThread) return "side-thread";
 	if (s.mermaidFocus) return "mermaid";
 	if (s.planOpen) return "plan";
 	if (s.setupOpen) return "setup";
@@ -1959,6 +2192,32 @@ export function shouldStampGeometryMute(nextH: number, prevH: number, pending: b
 	return pending && nextH > prevH + 1;
 }
 
+/** Reports the transcript's scroll element once StickToBottom attaches it
+ *  (its ref lands after first render, like SessionMessageNavigation's). */
+function TranscriptElementReporter({ onElement }: { onElement: (element: HTMLElement | null) => void }) {
+	const { scrollRef } = useStickToBottomContext();
+	useEffect(() => {
+		if (scrollRef.current) { onElement(scrollRef.current); return () => onElement(null); }
+		const id = window.setInterval(() => {
+			if (!scrollRef.current) return;
+			window.clearInterval(id);
+			onElement(scrollRef.current);
+		}, 50);
+		return () => { window.clearInterval(id); onElement(null); };
+	}, [scrollRef, onElement]);
+	return null;
+}
+
+/**
+ * The scroll fold's rule (intent-gated, owner 2026-10-05) plus the PIN
+ * (owner, 2026-10-27): a question opened while scrolled up opens in place
+ * and never folds until answered — the learner reads history beside it.
+ * Pure for tests.
+ */
+export function shouldFold(d: number, s: { intent: boolean; atBottom: boolean; pinned: boolean }): boolean {
+	return d > COLLAPSE_DIST && !s.intent && !s.atBottom && !s.pinned;
+}
+
 function DockOverlay({
 	pending,
 	initialQuestionDraft,
@@ -1976,6 +2235,8 @@ function DockOverlay({
 	cliContextWindow,
 	pricing,
 	composer,
+	askComposer,
+	openQuestions,
 	onSubmitAnswer,
 	chatId,
 	onModelChange,
@@ -1985,6 +2246,7 @@ function DockOverlay({
 	dictationSlot,
 	dictationCancel,
 	setupCta,
+	composerActions,
 	queuedSteers,
 }: {
 	pending: ReturnType<typeof pendingQuestionOf>;
@@ -2014,6 +2276,10 @@ function DockOverlay({
 	cliContextWindow: ReturnType<typeof cliContextWindowOf>;
 	pricing?: SessionPricing;
 	composer: React.ReactNode;
+	/** The ask box above a closed teach check or a prediction, when that
+	 *  call is the only open question. */
+	askComposer?: React.ReactNode;
+	openQuestions: number;
 	onSubmitAnswer: (output: QuestionAnswerData) => void;
 	/** The model control's pass-through (the stats bar hosts it). */
 	chatId: string;
@@ -2038,6 +2304,9 @@ function DockOverlay({
 	/** The persistent setup CTA (BYOK, owner 2026-09-22): the same pill
 	 *  home and /chat/new carry, above the composer while slots are unset. */
 	setupCta?: React.ReactNode;
+	/** The composer's action row (session context attachments, 2026-10-29):
+	 *  shown only while the composer itself is (no question, no problem). */
+	composerActions?: React.ReactNode;
 }) {
 	const { isAtBottom, scrollToBottom, scrollRef } = useStickToBottomContext();
 	// Render-fresh bottom state (flicker round): the arrival block below reads
@@ -2054,6 +2323,8 @@ function DockOverlay({
 	// revealed, the normal collapse machine rules apply untouched.
 	const [revealed, setRevealed] = useState(false);
 	const revealPending = requiresReveal && !revealed;
+	const predictionPending =
+		pending !== null && !requiresReveal && questionAllowsAskBefore(pending.tool, phase);
 
 	const pendingId = pending?.key ?? null;
 	const initialPendingRef = useRef(pendingId);
@@ -2068,9 +2339,12 @@ function DockOverlay({
 	// measures the bar, the reserve keeps the composer's height, and the
 	// only motion is the teaching text itself.
 	const prevPendingIdRef = useRef(pendingId);
+	// Set by an in-place open while scrolled up; the next question starts unpinned.
+	const pinnedRef = useRef(false);
 	if (pendingId !== prevPendingIdRef.current) {
 		const wasQuestion = prevPendingIdRef.current !== null;
 		prevPendingIdRef.current = pendingId;
+		pinnedRef.current = false;
 		if (pendingId && requiresReveal) {
 			const arrival = revealArrival(wasQuestion);
 			setExpanded(arrival.expanded);
@@ -2109,6 +2383,8 @@ function DockOverlay({
 	pendingRef.current = !!pending || !!practice;
 	const requiresRevealRef = useRef(requiresReveal);
 	requiresRevealRef.current = requiresReveal;
+	const autoCollapseRef = useRef(true);
+	autoCollapseRef.current = useAppearance().appearance.autoCollapseQuestions;
 	const revealedRef = useRef(revealed);
 	revealedRef.current = revealed;
 
@@ -2186,7 +2462,7 @@ function DockOverlay({
 	const [sbInset, setSbInset] = useState(0);
 	useDockHeight({
 		scrollRef, blockRef, viewportRef, bodyRef, shellRef, contentRef,
-		expanded, enabled: !!pending || !!practice, mode, onScrollbarInset: setSbInset, onHeight: offer,
+		expanded, pinned: pinnedRef.current, enabled: !!pending || !!practice, mode, onScrollbarInset: setSbInset, onHeight: offer,
 	});
 
 	// GROWTH MUTE (owner round, 2026-10-05 — the generation churn): during a
@@ -2253,6 +2529,12 @@ function DockOverlay({
 	const expandAndReveal = () => {
 		setRevealed(true); // the teach-check invitation was accepted (W5)
 		setExpanded(true);
+		// Scrolled up (owner, 2026-10-27): open in place, no jump to the
+		// bottom, and pin it open until answered (shouldFold).
+		if (!atBottomRef.current) {
+			pinnedRef.current = true;
+			return;
+		}
 		void suppressFoldDuringReveal();
 	};
 	const expandAndRevealRef = useRef(expandAndReveal);
@@ -2308,7 +2590,12 @@ function DockOverlay({
 				// folded on stick-to-bottom's catch-up transients; a real fold
 				// needs the distance AND stick-to-bottom agreeing the learner
 				// left the bottom.
-				if (d > COLLAPSE_DIST && !expandIntentRef.current && !atBottomRef.current) setExpanded(false);
+				// Auto-collapse setting (#127): off means scrolling never folds.
+				if (
+					autoCollapseRef.current &&
+					shouldFold(d, { intent: expandIntentRef.current, atBottom: atBottomRef.current, pinned: pinnedRef.current })
+				)
+					setExpanded(false);
 			} else if (d < EXPAND_DIST) {
 				// Teach checks stay collapsed until the learner opens them (W5): the
 				// at-bottom auto-expand would pop the form over the teaching.
@@ -2391,6 +2678,7 @@ function DockOverlay({
 					<div ref={viewportRef} data-dock-viewport="" className="pointer-events-auto">
 					<div ref={bodyRef}>
 					{setupCta}
+					{!pending && !practice && composerActions}
 					{/* The queued-steer indicator (owner spec 2026-10-03): quiet
 					    one-liners above the shell - right-aligned to where its corner
 					    rounding starts, truncated, no background, no container. A
@@ -2418,6 +2706,18 @@ function DockOverlay({
 							claim={revealPending}
 						/>
 					)}
+					{/* Ask about the teaching just given. Above a closed check the
+					    notes stay in the field; above a prediction the box sits
+					    on the dock, open or folded. The send closes the call
+					    as notYet and the teacher poses the same question again. */}
+					{askBeforeCheckVisible(revealPending, predictionPending, openQuestions) && askComposer && (
+						<div
+							data-testid="ask-before-check"
+							className="pointer-events-auto mb-2 overflow-hidden rounded-2xl border bg-card shadow-lg"
+						>
+							{askComposer}
+						</div>
+					)}
 					<div ref={shellRef} className="lh-dock-shell pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
 						{/* Include descendant margins (notably practice thinking's
 						    bottom margin) in the natural content measurement. */}
@@ -2444,8 +2744,9 @@ function DockOverlay({
 								/>
 							) : practice ? (
 								<PracticeDock
+									key={practice.toolCallId}
 									problemCallId={practice.toolCallId}
-									input={practice.input as { statement: string }}
+									input={practice.input as { statement: string; reference?: string }}
 									expanded={expanded}
 									onExpand={() => {
 										setExpanded(true);

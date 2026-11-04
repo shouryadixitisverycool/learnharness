@@ -26,7 +26,7 @@ These are not a complete hexagonal-architecture proof. Some core modules are Nod
 
 These are different lifetimes:
 
-- **Conversation:** a durable `ChatRecord` in `data/chats/<id>.json`, containing native `LhMessage[]`, settings, an optional plan tree and usage logs. Missing `kind` means teaching; `kind: "practice"` selects the practitioner.
+- **Conversation:** a durable `ChatRecord` in `data/chats/<id>.json`, containing native `LhMessage[]`, settings, an optional plan tree and usage logs. Missing `kind` means teaching; `kind: "practice"` selects the practitioner. Uploaded session attachments (images, PDFs, EPUBs) are recorded on the chat and stored once by content under `data/attachments/<sha256><ext>`, shared across sessions; a blob is deleted only when no chat record names it.
 - **Engine:** a resolved Pi model, stream function and thinking level (`PiEngine` in `src/agent/models.ts`). It is provider-aware, not an OpenRouter-only abstraction.
 - **Agent:** a fresh `@earendil-works/pi-agent-core` `Agent` constructed for one application turn, with that conversation's history, current prompt and current tool registry.
 - **Application turn:** one accepted input followed by a server-owned agent run. A run can make several model calls and execute tools before it ends. It is not an HTTP connection or a single provider generation.
@@ -94,9 +94,13 @@ The choice/free-recall mechanic selects one graded tool per teaching phase. Tool
 
 Pending calls are record-derived, so reopening an unanswered question needs no new model call. If a model emitted sibling questions, answering one persists its result without starting inference while another remains pending; the last answer starts the reaction turn.
 
+If the answer reaction completes with no text or tool call, the same agent makes one continuation request with a system reminder to respond to the saved answer. Both requests retain normal admission and usage accounting. A second empty completion becomes a persisted failure with the existing Retry action; Retry omits the empty attempts from its temporary history while keeping the answer and attempts on disk. Provider errors, aborts and practice pauses do not trigger this recovery.
+
 **Probe → plan → teach:** a matching successful `probe_done` result, not a bare call or refusal, selects the teacher on subsequent turns. The tool queues a handoff wake, which must build a fresh teacher rather than steer into the prober. If the wake cannot be delivered, the next learner turn still selects the teacher from the saved seam. Phase display (`src/core/phases.ts`) advances from probe to plan at that successful result, and to teach at the first `nodeId`-tagged `quiz`/`explain` call—not at `plan_init` or an acceptance marker.
 
 **Plan:** `plan_init` parses a restricted Mermaid graph and validates its DAG structure. It writes/replaces the whole plan; it is intentionally re-callable, not mechanically author-once. Question node IDs validate against the current tree. Current/visited/upcoming statuses derive from tagged calls, not grades or explicit “done” writes. Presenting the plan and waiting for a natural learner reply is prompt doctrine, not a separate acceptance transaction.
+
+**Session naming:** the teacher includes a concise `title` with the first `plan_init`, using the clarified goal and plan in the learner's language. After the tree is saved, the store replaces a prompt-derived title once and announces `chats-changed` to both sidebar and header. `titleSource` distinguishes prompt, plan, and manual titles; older records without a source are preserved. Missing titles or title-write failures leave the lesson usable with its existing title. Naming uses the teaching call and its normal usage accounting, with no separate model request.
 
 ## 4. Conversational practice
 
@@ -107,6 +111,7 @@ A practice session can start with graph selections or free-form material. Sessio
 - `problem` commits the statement and model solution together. The solution stays hidden in the UI until conclusion. A valid pose ends the run and opens the thinking dock; each thinking submission starts another turn on the same active problem.
 - `conclude` records outcome, verdict and diagnostic information and reveals the solution committed at pose time. Target IDs, when supplied, normalize/validate against graph propositions; targets can be omitted for material outside the map.
 - A turn-scoped gate, seeded from the record, enforces one active problem and rejects conclusion without one. The gate updates during tool execution, so it does not depend on the settlement-only transcript write.
+- A pose may also carry a `reference` sheet (formulas, rules). It then holds numbered exercises and opens as a fullscreen worksheet: exercises left, reference beside them, one shared thinking field. The reveal and the verdict are unchanged.
 - After conclusion, the prompt and tool acknowledgement tell the agent to close the turn and wait for explicit learner go-ahead. This pause is not a tool-level terminating gate on `conclude`. The Next problem action adds a native marker; dismissals use a synthesized conclusion and the separate dismissal path.
 
 Practice outcomes are evidence in the session, not graph mastery levels, certification or a spaced-repetition state store. The normal turn-settlement path skips extraction for practice sessions. Problem/solution/outcome projection lives in `src/core/native-messages.ts` and `src/core/view.ts`; the tools live in `src/agent/tools/practice.ts`.
@@ -232,7 +237,7 @@ Ordinary API credentials are read through the key seam, with real environment va
 - [Compaction, context and accounting](compaction-accounting.md)
 - [Development credential and shared-server boundaries](development.md#subscription-connections-in-webdev)
 
-File tools are read-only, but not confined to `data/` or a selected project: relative/default paths resolve against the server user's home. Walk exclusions reduce noise, not access authority. Existing-file attachments carry paths for the agent to read; they are not a new file-upload sandbox. Read/PDF/visual image results share image postprocessing; tool content retained outside the model-facing result follows [tool content recovery](tool-content-recovery.md). Search uses configured Tavily/Brave adapters; research can still use direct web fetching without a search key. Dictation mints short-lived Deepgram tokens server-side, then streams audio browser → Deepgram, not through the app server; its language preference is shared app settings.
+File tools are read-only, but not confined to `data/` or a selected project: relative/default paths resolve against the server user's home. Walk exclusions reduce noise, not access authority. Existing-file attachments carry paths for the agent to read; they are not a new file-upload sandbox. Uploaded session attachments are different: each turn's system prompt lists the session's active ones, and scoped `pdf_*`/`epub_*` readers accept only those files. Read/PDF/visual image results and inline attachment images share image postprocessing; tool content retained outside the model-facing result follows [tool content recovery](tool-content-recovery.md). Search uses configured Tavily/Brave adapters; research can still use direct web fetching without a search key. Dictation mints short-lived Deepgram tokens server-side, then streams audio browser → Deepgram, not through the app server; its language preference is shared app settings.
 
 ## 10. Verification seams
 

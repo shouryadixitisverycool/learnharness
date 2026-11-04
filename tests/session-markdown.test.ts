@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { LhMessage } from "../src/core/native-messages.ts";
 import { messageMarkdown, sessionMarkdown } from "../src/core/session-markdown.ts";
+import { serializeCitation } from "../src/core/citations.ts";
 import { messageViewLines } from "../src/core/coverage.ts";
 import { coverageSlots } from "../src/core/coverage.ts";
 
@@ -89,6 +90,26 @@ describe("messageMarkdown", () => {
 		assert.match(md, /\*\*Q:\*\* What is a derivative\?/);
 		assert.match(md, /The learner answered incorrectly\./);
 		assert.match(md, /\*\(his thinking: mixed up signs\)\*/);
+	});
+
+	it("a check he asked before is not a skip or a grade", () => {
+		const md = messageMarkdown(
+			result("r1", "q1", "quiz", { questionText: "What carries the tense?", notYet: true, dontKnow: false }),
+			"r1",
+		)!;
+		assert.match(md, /The learner asked something before taking this check\./);
+		assert.ok(!md.includes("skipped"));
+		assert.ok(!md.includes("incorrectly"));
+	});
+
+	it("a prediction he asked before is not a skip or a grade", () => {
+		const md = sessionMarkdown([
+			callMsg("a1", "q1", "quiz", { question: "Which form?", type: "predict", nodeId: "n1" }),
+			result("r1", "q1", "quiz", { questionText: "Which form?", notYet: true, dontKnow: false }),
+		])!;
+		assert.match(md, /The learner asked something before taking this prediction\./);
+		assert.ok(!md.includes("skipped"));
+		assert.ok(!md.includes("incorrectly"));
 	});
 
 	it("explain results: the learner's own words are shown", () => {
@@ -222,5 +243,13 @@ describe("sessionMarkdown", () => {
 			const hasMarkdown = messageMarkdown(message, message.id) !== null;
 			assert.equal(hasLines, isTeacher && hasMarkdown, `view lines follow teacher prose for ${message.id}`);
 		}
+	});
+});
+
+describe("tutor citations in session markdown", () => {
+	it("renders a learner citation as a readable quote, never the raw link", () => {
+		const link = serializeCitation({ version: 1, chatId: "c", messageId: "m", text: "x y", start: 0, end: 3, prefix: "", suffix: "", comment: "why" });
+		const md = messageMarkdown(user("u1", `see ${link}`), "u1");
+		assert.equal(md, "### Learner · u1\n\nsee \n\n> Tutor quote:\n> x y\n\nComment: why");
 	});
 });

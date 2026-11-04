@@ -32,6 +32,7 @@ describe("FACTORY_SETTINGS (the compiled factory layer)", () => {
 		assert.equal(a.fontFamily, null); // Source Sans 3
 		assert.equal(a.proseFontSize, 16);
 		assert.equal(a.sessionNameSerif, true);
+		assert.equal(a.autoCollapseQuestions, true); // today's behavior
 		assert.equal(a.mdRendering.headingWeight, 900);
 		assert.equal(a.mdRendering.boldColor, null); // white
 		assert.equal(a.mdRendering.italicColor, null);
@@ -149,6 +150,17 @@ describe("sanitizeUserSettings", () => {
 		assert.equal(out.appearance?.mdRendering?.italicColor, null);
 	});
 
+	it("appearance: system mode and lightBackground survive; junk drops", () => {
+		const out = sanitizeUserSettings({ appearance: { mode: "system", lightBackground: "#eeeeee" } });
+		assert.ok(out);
+		assert.equal(out.appearance?.mode, "system");
+		assert.equal(out.appearance?.lightBackground, "#eeeeee");
+		const junk = sanitizeUserSettings({ appearance: { mode: "sepia", lightBackground: "nope" } });
+		assert.ok(junk);
+		assert.equal(junk.appearance?.mode, undefined);
+		assert.equal(junk.appearance?.lightBackground, null);
+	});
+
 	it("empty strings/whitespace fontFamily → null (Source Sans 3); wrong-type → null too (the default)", () => {
 		for (const bad of ["", "   ", 12, { name: "x" }]) {
 			const out = sanitizeUserSettings({ appearance: { fontFamily: bad } });
@@ -204,13 +216,31 @@ describe("sanitizeUserSettings", () => {
 		assert.deepEqual(out.agent?.tools, { quiz: false, demo: true });
 	});
 
-	it("BACKGROUND_MODEL_ROLES matches the five background roles (practice trio deleted 2026-10-04)", () => {
+	it("BACKGROUND_MODEL_ROLES matches the six override roles (practice trio deleted 2026-10-04, sideQuestion added)", () => {
 		assert.deepEqual([...BACKGROUND_MODEL_ROLES], [
 			"researcher",
 			"demoBuilder",
 			"visualMaker",
 			"extractor",
 			"auditor",
+			"sideQuestion",
 		]);
+	});
+});
+
+describe("studyTime settings", () => {
+	it("factory defaults", () => {
+		assert.deepEqual(FACTORY_SETTINGS.studyTime, { idleMinutes: 5, weekStart: "monday" });
+	});
+
+	it("sanitize: clamps and rounds idleMinutes, drops junk, keeps valid weekStart", () => {
+		const run = (studyTime: unknown) => sanitizeUserSettings({ version: 1, studyTime })?.studyTime;
+		assert.deepEqual(run({ idleMinutes: 0 }), { idleMinutes: 1 });
+		assert.deepEqual(run({ idleMinutes: 500 }), { idleMinutes: 60 });
+		assert.deepEqual(run({ idleMinutes: 7.6 }), { idleMinutes: 8 });
+		assert.deepEqual(run({ idleMinutes: "9", weekStart: "friday" }), {});
+		assert.deepEqual(run({ idleMinutes: Number.NaN }), {});
+		assert.deepEqual(run({ weekStart: "sunday" }), { weekStart: "sunday" });
+		assert.equal(run(undefined), undefined);
 	});
 });

@@ -40,6 +40,7 @@ import {
 	type CustomModel,
 	type CustomModelOverride,
 	type GraphSettings,
+	type StudyTimeSettings,
 	type ModelSlot,
 	type ModelSlotName,
 	type RoleModelOverride,
@@ -101,6 +102,7 @@ export interface EffectiveSettings {
 	/** Custom endpoint, resolved concrete: baseUrl defaults "", models and
 	 *  user pins default to empty. */
 	customProvider: { baseUrl: string; models: CustomModel[]; overrides: Record<string, CustomModelOverride>; manualModels: string[] };
+	studyTime: Required<StudyTimeSettings>;
 }
 
 /** The conversation pair's chain (BYOK, owner 2026-09-22): the chat's own
@@ -119,6 +121,16 @@ export function resolveConversationSpec(
 		id: model.id,
 		thinkingLevel: chat?.thinkingLevel ?? strong?.thinkingLevel,
 	};
+}
+
+/** Side questions (#16): the chat's own conversation chain, under the
+ *  optional agent.models.sideQuestion override (field by field). */
+export function resolveSideQuestionSpec(chat: ChatSettings | undefined, record: UserSettings | null): EffectiveModelSpec | null {
+	const conversation = resolveConversationSpec(chat, resolveSlot(record?.models?.strong));
+	const override = record?.agent?.models?.sideQuestion;
+	const model = override?.model ?? (conversation ? { provider: conversation.provider, id: conversation.id } : undefined);
+	if (!model) return null;
+	return { provider: model.provider, id: model.id, thinkingLevel: override?.thinkingLevel ?? conversation?.thinkingLevel };
 }
 
 /** Full-chain resolution for ANY role (BYOK, owner 2026-09-22):
@@ -205,9 +217,11 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 		appearance: {
 			mode: appearance.mode ?? factoryAppearance.mode,
 			background: appearance.background ?? factoryAppearance.background,
+			lightBackground: appearance.lightBackground ?? factoryAppearance.lightBackground,
 			fontFamily: appearance.fontFamily ?? factoryAppearance.fontFamily,
 			proseFontSize: appearance.proseFontSize ?? factoryAppearance.proseFontSize,
 			sessionNameSerif: appearance.sessionNameSerif ?? factoryAppearance.sessionNameSerif,
+			autoCollapseQuestions: appearance.autoCollapseQuestions ?? factoryAppearance.autoCollapseQuestions,
 			mdRendering: {
 				headingWeight: md.headingWeight ?? factoryMd.headingWeight,
 				boldColor: md.boldColor ?? factoryMd.boldColor,
@@ -235,6 +249,10 @@ export function resolveSettings(record: UserSettings | null): EffectiveSettings 
 			models: record?.customProvider?.models ?? [],
 			overrides: record?.customProvider?.overrides ?? {},
 			manualModels: record?.customProvider?.manualModels ?? [],
+		},
+		studyTime: {
+			idleMinutes: record?.studyTime?.idleMinutes ?? FACTORY_SETTINGS.studyTime.idleMinutes,
+			weekStart: record?.studyTime?.weekStart ?? FACTORY_SETTINGS.studyTime.weekStart,
 		},
 	};
 }

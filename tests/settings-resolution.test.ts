@@ -17,6 +17,7 @@ import {
 	resolveModelSpec,
 	resolveRoleSpec,
 	resolveSettings,
+	resolveSideQuestionSpec,
 	resolveSlot,
 } from "../src/core/settings-resolution.ts";
 import { BACKGROUND_MODEL_ROLES, type UserSettings } from "../src/core/settings.ts";
@@ -38,6 +39,7 @@ describe("resolveSettings", () => {
 		assert.equal(eff.models.vision, null);
 		assert.equal(eff.appearance.mode, "dark");
 		assert.equal(eff.appearance.background, null);
+		assert.equal(eff.appearance.lightBackground, null);
 		assert.equal(eff.appearance.fontFamily, null);
 		assert.equal(eff.appearance.proseFontSize, 16);
 		assert.equal(eff.appearance.sessionNameSerif, true);
@@ -58,7 +60,7 @@ describe("resolveSettings", () => {
 				prompts: { "system-prompt.md": true },
 				search: { engine: "tavily" },
 			},
-			appearance: { mode: "light", proseFontSize: 20, mdRendering: { headingWeight: 600 } },
+			appearance: { mode: "system", lightBackground: "#eeeeee", proseFontSize: 20, mdRendering: { headingWeight: 600 } },
 			graph: { enabled: false },
 		};
 		const eff = resolveSettings(record);
@@ -73,7 +75,8 @@ describe("resolveSettings", () => {
 		assert.deepEqual(eff.agent.search, { engine: "tavily" });
 		assert.deepEqual(eff.agent.tools, { research: false });
 		assert.deepEqual(eff.agent.prompts, { "system-prompt.md": true });
-		assert.equal(eff.appearance.mode, "light");
+		assert.equal(eff.appearance.mode, "system");
+		assert.equal(eff.appearance.lightBackground, "#eeeeee");
 		assert.equal(eff.appearance.proseFontSize, 20);
 		assert.equal(eff.appearance.mdRendering.headingWeight, 600);
 		// wave 7 collapse: the section IS the master switch (absent budget
@@ -239,6 +242,21 @@ describe("resolveConversationSpec (the turn gate's chain)", () => {
 	});
 });
 
+describe("resolveSideQuestionSpec", () => {
+	const strong = { model: { provider: "openrouter", id: "strong-1" }, thinkingLevel: "high" as const };
+	it("defaults to the chat's own model, then the strong slot", () => {
+		assert.deepEqual(resolveSideQuestionSpec({ model: { provider: "anthropic", id: "chat-m" } }, { version: 1, models: { strong } } as UserSettings),
+			{ provider: "anthropic", id: "chat-m", thinkingLevel: "high" });
+		assert.deepEqual(resolveSideQuestionSpec(undefined, { version: 1, models: { strong } } as UserSettings),
+			{ provider: "openrouter", id: "strong-1", thinkingLevel: "high" });
+	});
+	it("lets the agent.models.sideQuestion override win field by field", () => {
+		const record = { version: 1, models: { strong }, agent: { models: { sideQuestion: { thinkingLevel: "low" } } } } as UserSettings;
+		assert.deepEqual(resolveSideQuestionSpec(undefined, record), { provider: "openrouter", id: "strong-1", thinkingLevel: "low" });
+	});
+	it("is null with no model anywhere", () => { assert.equal(resolveSideQuestionSpec(undefined, null), null); });
+});
+
 describe("the graph channel gates (the wave's seam honoring)", () => {
 	it("WRITE channel (extraction): dies with the master switch — the ONLY graph setting since wave 7", () => {
 		assert.equal(extractionEnabled({ enabled: true }), true);
@@ -266,5 +284,16 @@ describe("the graph channel gates (the wave's seam honoring)", () => {
 		assert.deepEqual(eff.agent.graphTools, {});
 		const off = resolveSettings({ version: 1, agent: { graphTools: { enabled: false } } });
 		assert.deepEqual(off.agent.graphTools, { enabled: false });
+	});
+});
+describe("studyTime resolution", () => {
+	it("absent record and absent fields resolve to the factory defaults", () => {
+		assert.deepEqual(resolveSettings(null).studyTime, { idleMinutes: 5, weekStart: "monday" });
+		assert.deepEqual(resolveSettings({ version: 1, studyTime: {} }).studyTime, { idleMinutes: 5, weekStart: "monday" });
+	});
+
+	it("explicit values win, each field independently", () => {
+		assert.deepEqual(resolveSettings({ version: 1, studyTime: { idleMinutes: 20 } }).studyTime, { idleMinutes: 20, weekStart: "monday" });
+		assert.deepEqual(resolveSettings({ version: 1, studyTime: { weekStart: "sunday" } }).studyTime, { idleMinutes: 5, weekStart: "sunday" });
 	});
 });

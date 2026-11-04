@@ -302,7 +302,7 @@ test("toClaudeArgs includes every isolation flag from Global Constraints", () =>
 		"--setting-sources",
 		"user",
 		"--settings",
-		'{"disableAllHooks":true}',
+		'{"disableAllHooks":true,"outputStyle":"default"}',
 		"--disable-slash-commands",
 		"--no-session-persistence",
 		"--permission-prompts",
@@ -774,6 +774,14 @@ test("spawns with the model alias, effort, bridge tools, MCP timeout headroom an
 	assert.equal(call.env.CLAUDE_CONFIG_DIR, process.env.CLAUDE_CONFIG_DIR);
 });
 
+test("spawns without the user's CLAUDE.md or memory files, even when the launch env re-enables them", async (t) => {
+	const saved = process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS;
+	t.after(() => { if (saved === undefined) delete process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS; else process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = saved; });
+	process.env.CLAUDE_CODE_DISABLE_CLAUDE_MDS = "0";
+	const { calls } = await runScenario(t, readFixtureLines("text.jsonl"));
+	assert.equal(getOnlyCall(calls).env.CLAUDE_CODE_DISABLE_CLAUDE_MDS, "1");
+});
+
 test("MCP timeout headroom overrides inherited shorter timeouts", async (t) => {
 	const names = ["MCP_TOOL_TIMEOUT", "CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT"] as const;
 	const saved = names.map((name) => [name, process.env[name]] as const);
@@ -917,6 +925,27 @@ test("user message after tool results starts fresh with unfinished calls in the 
 	const stdin = readFileSync(stdinFile, "utf8");
 	assert.ok(stdin.includes('[tool call read] {\\"path\\":\\"a\\"}'), stdin);
 	assert.ok(stdin.includes("wait, explain sockets first"), stdin);
+});
+
+test("a changed history starts a new CLI session whose replay keeps the first message as its own block", async (t) => {
+	const stdinFile = join(mkdtempSync(join(tmpdir(), "claude-code-stdin-")), "stdin.jsonl");
+	t.after(() => rmSync(dirname(stdinFile), { recursive: true, force: true }));
+
+	const { runClaude, calls } = createFakeRun(t, readFixtureLines("text.jsonl"), { FAKE_CLAUDE_STDIN: stdinFile });
+	const streamFunction = createClaudeCodeStreamFunction(runClaude);
+	const first = await runTurn(streamFunction, [HI]);
+	const edited: Message = { ...HI, content: "hi, I edited this" };
+	await runTurn(streamFunction, [edited, first, { role: "user", content: "next", timestamp: 0 }]);
+
+	assert.equal(calls.length, 2);
+	const [one, two] = calls.map((call) => call.args);
+	assert.ok(one && two);
+	assert.notEqual(getFlagValue(two, "--session-id"), getFlagValue(one, "--session-id"));
+	assert.equal(two.includes("--resume"), false);
+	const userLine = readFileSync(stdinFile, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as { type: string; message?: { content: { type: string; text?: string }[] } }).find((line) => line.type === "user");
+	const content = userLine?.message?.content ?? [];
+	assert.deepEqual(content[0], { type: "text", text: "hi, I edited this" });
+	assert.ok(content[1]?.text?.startsWith("[assistant]"), JSON.stringify(content));
 });
 
 test("output while waiting for tool results kills the process", async (t) => {
