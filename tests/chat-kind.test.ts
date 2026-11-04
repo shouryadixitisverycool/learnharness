@@ -43,4 +43,36 @@ describe("session kind (practice sessions, 2026-10-04)", () => {
 		const listed = chatStore.listChats().find((c) => c.id === chat.id);
 		assert.equal(listed?.kind, "teach");
 	});
+
+	it("the summary projection marks a practice session with a posed problem as pendingProblem", async () => {
+		const { PRACTICE_PROBLEM_TOOL } = await import("../src/core/native-messages.ts");
+		const waiting = chatStore.createChat("problem waiting", "practice");
+		chatStore.saveMessages(waiting.id, [
+			{
+				id: "msg_a_call_p1",
+				role: "assistant",
+				content: [{ type: "toolCall", id: "call_p1", name: PRACTICE_PROBLEM_TOOL, arguments: { statement: "Show that…", mode: "recall", modelSolution: "Show that…" } }],
+				api: "faux",
+				provider: "test",
+				model: "test-model",
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+				stopReason: "toolUse",
+				timestamp: 1,
+			},
+			{
+				id: "msg_r_call_p1",
+				role: "toolResult",
+				toolCallId: "call_p1",
+				toolName: PRACTICE_PROBLEM_TOOL,
+				content: [{ type: "text", text: "Problem posed — the turn ends here." }],
+				details: null,
+				isError: false,
+				timestamp: 2,
+			},
+		]);
+		const idle = chatStore.createChat("no problem yet", "practice");
+		const listed = chatStore.listChats();
+		assert.equal(listed.find((c) => c.id === waiting.id)?.pendingProblem, true);
+		assert.equal(listed.find((c) => c.id === idle.id)?.pendingProblem, false);
+	});
 });
