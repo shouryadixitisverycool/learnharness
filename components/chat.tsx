@@ -37,6 +37,7 @@ import { useFieldCycle } from "@/components/field-cycle";
 import { JobsContext } from "@/components/jobs-context";
 import { StatsBar } from "@/components/stats-bar";
 import { useServerEvent, useServerResync } from "@/components/server-events";
+import { useSessionTitle } from "@/components/session-title";
 import {
 	isProviderKeyRefusal,
 	chatHasStarted,
@@ -79,25 +80,28 @@ import {
 	malformedQuestionsOf,
 	dismissedAnswer,
 	endsInFailedTurn,
+	askBeforeCheckVisible,
 	findPendingToolCall,
+	pendingQuestionCount,
 	phaseAt3,
 	phaseTimeline,
 	teachStepIndex,
 	toolQuestionKind,
+	questionAllowsAskBefore,
 	questionNeedsReveal,
 } from "@/src/core";
 import { ReadingThinkingField } from "@/components/reading-thinking";
 import { currentUserThinkingOpen, setAllUserThinkingOpen } from "@/components/thinking-block";
+import { useAppearance } from "@/components/settings/appearance";
 
-/** One width for everything: transcript, cards, and the bottom blob share this column. */
 /**
- * Width tokens (wave-5 reskin, owner decision): the teaching PROSE spans the
- * full session width with a thin px-6 margin; the composer/question DOCK is
- * deliberately narrower (~46rem centered) per the reference. Same ELEMENT,
- * same place — width polish only.
+ * Width tokens: the composer/question DOCK is a centered 46rem column, and
+ * the transcript reads in the same column (#136): full-width prose ran ~300
+ * characters per line on a 2560px window. Sharing the token keeps the text
+ * edges flush with the composer's, and the plan marginalia keeps the flank.
  */
-const COLUMN = "mx-auto w-full max-w-none px-6";
 const DOCK = "mx-auto w-full max-w-[46rem] px-4";
+const COLUMN = DOCK;
 // The DOCK container's fixed width (46rem) and the plan marginalia's
 // geometry (owner, plan-placement round): the bare diagram sits in the
 // dock band's RIGHT flank — MARGIN_GAP from the DOCK container's edge and
@@ -282,9 +286,9 @@ export function Chat({
 	// title opens edit mode with everything selected — typing replaces, arrows
 	// move inside. Enter or a click away commits (PUT /api/chats/:id); Escape
 	// discards. The server never bumps updatedAt on a rename (sidebar order
-	// must not churn), and the sidebar patch is instant via the window event —
-	// its 2.5s poll is only a backstop.
-	const [titleText, setTitleText] = useState(title);
+	// must not churn). Local renames patch instantly; server-generated titles
+	// and other windows arrive through chats-changed notifications.
+	const [titleText, setTitleText] = useSessionTitle(chatId, title);
 	const [renaming, setRenaming] = useState(false);
 	const [titleDraft, setTitleDraft] = useState("");
 	const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -309,7 +313,7 @@ export function Chat({
 				console.error("rename failed:", err); // keep the old title
 			}
 		},
-		[chatId, titleText],
+		[chatId, titleText, setTitleText],
 	);
 
 	// Select-all when edit mode opens: the click means "replace", so the
@@ -342,11 +346,11 @@ export function Chat({
 	useEffect(() => {
 		const onRenamed = (e: Event) => {
 			const { id, title } = (e as CustomEvent<{ id: string; title: string }>).detail;
-			if (id === chatId) setTitleText((prev) => (title !== prev ? title : prev));
+			if (id === chatId) setTitleText(title);
 		};
 		window.addEventListener("lh:chat-renamed", onRenamed);
 		return () => window.removeEventListener("lh:chat-renamed", onRenamed);
-	}, [chatId]);
+	}, [chatId, setTitleText]);
 
 	// The Esc chain's last link: abort the turn. The background runner
 	// decoupled turns from views, so the abort is ALWAYS the remote kill
@@ -415,8 +419,10 @@ export function Chat({
 			const p = pendingRef.current;
 			if (p) {
 				const question = (p.input as { question?: string } | null)?.question ?? "";
-				const reading = readingThinkingRef.current.trim() || undefined;
-				clearReadingThinking();
+				// Notes ride a teach-check dismissal. Another open question
+				// (a prediction, a probe) leaves them for the check's return.
+				const reading = requiresRevealRef.current ? readingThinkingRef.current.trim() || undefined : undefined;
+				if (requiresRevealRef.current) clearReadingThinking();
 				const answer = dismissedAnswer(toolQuestionKind(p.tool), question);
 				void dismissQuestion(
 					p.toolCallId,
@@ -459,6 +465,8 @@ export function Chat({
 	// listener is mount-scoped; the value it needs is render-scoped).
 	const pendingRef = useRef(pending);
 	pendingRef.current = pending;
+	// The abort confirm reads this after the render that computed it.
+	const requiresRevealRef = useRef(false);
 
 	// THE ACTIVE PRACTICE PROBLEM (practice sessions, 2026-10-04): the
 	// same dock-ownership rule as a pending question — an active problem
@@ -519,13 +527,17 @@ export function Chat({
 	// ends at the question call), so the session's current phase IS the
 	// question's phase.
 	const requiresReveal = pending !== null && questionNeedsReveal(pending.tool, pending.input, phaseAt3(messages));
+	requiresRevealRef.current = requiresReveal;
 
 	/* The READING-THINKING channel (owner 2026-10-03): a draft field for
 	 * thinking while reading the teaching prose, mounted while a check waits
 	 * behind its reveal, riding the check answer (or its dismissal) as the
-	 * separate `readingThinking` field. Reset per pending question. */
+	 * separate `readingThinking` field. Reset per pending question, except
+	 * across an ask-before-check: that closes the check and the teacher
+	 * poses it again, and the notes stay for that return. */
 	const [readingThinkingSeed, setReadingThinkingSeed] = useState({ questionId: null as string | null, value: "", revision: 0 });
 	const readingThinkingRef = useRef("");
+	const preserveReadingRef = useRef(false);
 
 	// ⌘T (toggle-user-thinking, owner round 2026-10-07): set EVERY user
 	// thinking row to one state — transcript rows default open, so the
@@ -539,6 +551,7 @@ export function Chat({
 		readingThinkingRef.current = v;
 	}, []);
 	const clearReadingThinking = useCallback(() => {
+		preserveReadingRef.current = false;
 		readingThinkingRef.current = "";
 		setReadingThinkingSeed((previous) => ({ ...previous, value: "", revision: previous.revision + 1 }));
 	}, []);
@@ -546,7 +559,10 @@ export function Chat({
 	useLayoutEffect(() => {
 		// Different calls never share a draft; a failed submission of THIS
 		// call restores the reading channel alongside the form's snapshot.
-		const value = pendingQuestionId ? questionDraft(pendingQuestionId)?.readingThinking ?? "" : "";
+		// An ask-before-check (#138) carries the notes to the re-posed check.
+		const value = preserveReadingRef.current
+			? readingThinkingRef.current
+			: pendingQuestionId ? questionDraft(pendingQuestionId)?.readingThinking ?? "" : "";
 		readingThinkingRef.current = value;
 		setReadingThinkingSeed((previous) =>
 			previous.questionId === pendingQuestionId && previous.value === value
@@ -1202,6 +1218,18 @@ export function Chat({
 		void syncFromServer();
 	});
 
+	const openQuestions = pendingQuestionCount(messages);
+	const predictionPending =
+		pending !== null && !requiresReveal && questionAllowsAskBefore(pending.tool, phaseAt3(messages));
+	const onAskBeforeCheck = () => {
+		if (!pending || compacting || busy) return;
+		if (!askBeforeCheckVisible(requiresReveal, predictionPending, openQuestions)) return;
+		const t = textRef.current.trim();
+		if (!t) return;
+		preserveReadingRef.current = true;
+		applyText("");
+		void send({ type: "ask-before-check", toolCallId: pending.toolCallId, text: t });
+	};
 	const onSend = () => {
 		if (pending || compacting) return;
 		/* FINISH DICTATION FIRST (owner, 2026-10-01): a learner who keeps
@@ -1404,7 +1432,7 @@ export function Chat({
 				<div ref={sessionFindScopeRef} className="relative flex min-h-0 flex-1">
 				<Conversation className="h-full min-w-0 flex-1" initial="instant" contextRef={scrollContextRef}>
 					<SessionMessageNavigation />
-					<ConversationContent className="min-h-full gap-0 p-0">
+					<ConversationContent className="min-h-full gap-0 p-0 [container-type:inline-size]">
 						<div data-session-find-root="" className={`${COLUMN} flex flex-1 flex-col gap-4 pt-4`}>
 							{messages.length === 0 && !busy && (
 								<ConversationEmptyState
@@ -1526,7 +1554,7 @@ export function Chat({
 											</div>
 									) : (
 									<Message from="assistant" className="max-w-full">
-									<MessageContent className="w-full">
+									<MessageContent className="w-full overflow-visible">
 											{m.parts.map((part, pi) => {
 												const isLastPart = mi === messages.length - 1 && pi === m.parts.length - 1;
 												// The step boundary where teaching begins (round 8): when
@@ -1760,6 +1788,24 @@ export function Chat({
 							placeholder={nextReady ? "Ask anything, or press Enter for the next one." : undefined}
 						/>
 					}
+					openQuestions={openQuestions}
+					askComposer={
+						openQuestions === 1 ? (
+							<ChatSessionComposer
+								busy={false}
+								value={textRef.current}
+								revision={composerDraftRevision}
+								onChange={recordComposerText}
+								onSend={onAskBeforeCheck}
+								onStop={() => {}}
+								sendAllowed={!compacting && !busy}
+								// #138's send rule: typed text only (onAskBeforeCheck).
+								dictationActive={false}
+								onEscape={dictation.active ? dictation.cancel : undefined}
+								placeholder="Ask about what you just read…"
+							/>
+						) : null
+					}
 					onSubmitAnswer={(output) => {
 						if (!pending) return;
 						// THE ANSWER IS THE QUESTION CALL'S TOOL RESULT (fork 1, owner
@@ -1769,9 +1815,12 @@ export function Chat({
 						// turn; the teacher's reaction streams below it. Dismissals
 						// ride the same callback (QuestionAnswerData.dismissed). The
 						// reading-thinking draft rides along (owner 2026-10-03) — the
-						// check answer is its only carrier.
+						// check answer is its only carrier. A prediction or probe
+						// answer leaves the notes for the teach check's return.
 						saveQuestionDraft(pending.key, { readingThinking: readingThinkingRef.current });
-						const reading = readingThinkingRef.current.trim() || undefined;
+						const reading = requiresReveal ? readingThinkingRef.current.trim() || undefined : undefined;
+						// The check's answer consumes the notes: stop carrying them.
+						if (requiresReveal) preserveReadingRef.current = false;
 						// The pending-id effect clears this only when the question
 						// actually leaves. An offline preflight keeps the draft visible.
 						submitAnswer(pending.tool, pending.toolCallId, reading ? { ...output, readingThinking: reading } : output, pending.key);
@@ -1838,7 +1887,8 @@ export function Chat({
  * is open (a shrinking tail would reintroduce the clamp).
  *
  * Collapse: scroll up past COLLAPSE_DIST and the dock folds into a slim bar;
- * click it (or scroll back to the bottom) to re-expand. The question form
+ * click it to re-expand in place (pinned open until answered), or scroll
+ * back to the bottom. The question form
  * stays MOUNTED while collapsed (hidden, not unmounted) so a half-made
  * selection survives.
  */
@@ -1928,6 +1978,16 @@ export function shouldStampGeometryMute(nextH: number, prevH: number, pending: b
 	return pending && nextH > prevH + 1;
 }
 
+/**
+ * The scroll fold's rule (intent-gated, owner 2026-10-05) plus the PIN
+ * (owner, 2026-10-27): a question opened while scrolled up opens in place
+ * and never folds until answered — the learner reads history beside it.
+ * Pure for tests.
+ */
+export function shouldFold(d: number, s: { intent: boolean; atBottom: boolean; pinned: boolean }): boolean {
+	return d > COLLAPSE_DIST && !s.intent && !s.atBottom && !s.pinned;
+}
+
 function DockOverlay({
 	pending,
 	initialQuestionDraft,
@@ -1945,6 +2005,8 @@ function DockOverlay({
 	cliContextWindow,
 	pricing,
 	composer,
+	askComposer,
+	openQuestions,
 	onSubmitAnswer,
 	chatId,
 	onModelChange,
@@ -1983,6 +2045,10 @@ function DockOverlay({
 	cliContextWindow: ReturnType<typeof cliContextWindowOf>;
 	pricing?: SessionPricing;
 	composer: React.ReactNode;
+	/** The ask box above a closed teach check or a prediction, when that
+	 *  call is the only open question. */
+	askComposer?: React.ReactNode;
+	openQuestions: number;
 	onSubmitAnswer: (output: QuestionAnswerData) => void;
 	/** The model control's pass-through (the stats bar hosts it). */
 	chatId: string;
@@ -2023,6 +2089,8 @@ function DockOverlay({
 	// revealed, the normal collapse machine rules apply untouched.
 	const [revealed, setRevealed] = useState(false);
 	const revealPending = requiresReveal && !revealed;
+	const predictionPending =
+		pending !== null && !requiresReveal && questionAllowsAskBefore(pending.tool, phase);
 
 	const pendingId = pending?.key ?? null;
 	const initialPendingRef = useRef(pendingId);
@@ -2037,9 +2105,12 @@ function DockOverlay({
 	// measures the bar, the reserve keeps the composer's height, and the
 	// only motion is the teaching text itself.
 	const prevPendingIdRef = useRef(pendingId);
+	// Set by an in-place open while scrolled up; the next question starts unpinned.
+	const pinnedRef = useRef(false);
 	if (pendingId !== prevPendingIdRef.current) {
 		const wasQuestion = prevPendingIdRef.current !== null;
 		prevPendingIdRef.current = pendingId;
+		pinnedRef.current = false;
 		if (pendingId && requiresReveal) {
 			const arrival = revealArrival(wasQuestion);
 			setExpanded(arrival.expanded);
@@ -2078,6 +2149,8 @@ function DockOverlay({
 	pendingRef.current = !!pending || !!practice;
 	const requiresRevealRef = useRef(requiresReveal);
 	requiresRevealRef.current = requiresReveal;
+	const autoCollapseRef = useRef(true);
+	autoCollapseRef.current = useAppearance().appearance.autoCollapseQuestions;
 	const revealedRef = useRef(revealed);
 	revealedRef.current = revealed;
 
@@ -2155,7 +2228,7 @@ function DockOverlay({
 	const [sbInset, setSbInset] = useState(0);
 	useDockHeight({
 		scrollRef, blockRef, viewportRef, bodyRef, shellRef, contentRef,
-		expanded, enabled: !!pending || !!practice, mode, onScrollbarInset: setSbInset, onHeight: offer,
+		expanded, pinned: pinnedRef.current, enabled: !!pending || !!practice, mode, onScrollbarInset: setSbInset, onHeight: offer,
 	});
 
 	// GROWTH MUTE (owner round, 2026-10-05 — the generation churn): during a
@@ -2222,6 +2295,12 @@ function DockOverlay({
 	const expandAndReveal = () => {
 		setRevealed(true); // the teach-check invitation was accepted (W5)
 		setExpanded(true);
+		// Scrolled up (owner, 2026-10-27): open in place, no jump to the
+		// bottom, and pin it open until answered (shouldFold).
+		if (!atBottomRef.current) {
+			pinnedRef.current = true;
+			return;
+		}
 		void suppressFoldDuringReveal();
 	};
 	const expandAndRevealRef = useRef(expandAndReveal);
@@ -2277,7 +2356,12 @@ function DockOverlay({
 				// folded on stick-to-bottom's catch-up transients; a real fold
 				// needs the distance AND stick-to-bottom agreeing the learner
 				// left the bottom.
-				if (d > COLLAPSE_DIST && !expandIntentRef.current && !atBottomRef.current) setExpanded(false);
+				// Auto-collapse setting (#127): off means scrolling never folds.
+				if (
+					autoCollapseRef.current &&
+					shouldFold(d, { intent: expandIntentRef.current, atBottom: atBottomRef.current, pinned: pinnedRef.current })
+				)
+					setExpanded(false);
 			} else if (d < EXPAND_DIST) {
 				// Teach checks stay collapsed until the learner opens them (W5): the
 				// at-bottom auto-expand would pop the form over the teaching.
@@ -2386,6 +2470,18 @@ function DockOverlay({
 							}
 							claim={revealPending}
 						/>
+					)}
+					{/* Ask about the teaching just given. Above a closed check the
+					    notes stay in the field; above a prediction the box sits
+					    on the dock, open or folded. The send closes the call
+					    as notYet and the teacher poses the same question again. */}
+					{askBeforeCheckVisible(revealPending, predictionPending, openQuestions) && askComposer && (
+						<div
+							data-testid="ask-before-check"
+							className="pointer-events-auto mb-2 overflow-hidden rounded-2xl border bg-card shadow-lg"
+						>
+							{askComposer}
+						</div>
 					)}
 					<div ref={shellRef} className="pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
 						{/* Include descendant margins (notably practice thinking's

@@ -741,6 +741,14 @@ export function questionCallsOf(messages: readonly LhMessage[]): QuestionCall[] 
 	return [];
 }
 
+/** Unresolved question calls on the newest assistant message, in any
+ *  status (answerable, malformed, streaming, failed). Zero when that
+ *  message has none, matching questionCallsOf. ask-before-check requires
+ *  exactly one, so a user message never lands ahead of a sibling's result. */
+export function danglingQuestionCount(messages: readonly LhMessage[]): number {
+	return questionCallsOf(messages).length;
+}
+
 /** Background wakes must still wait for an explicit learner action when a
  * question is unusable. Releasing the composer is not permission to retry. */
 export function hasUnresolvedQuestion(messages: readonly LhMessage[]): boolean {

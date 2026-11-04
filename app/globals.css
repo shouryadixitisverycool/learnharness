@@ -202,6 +202,14 @@ body {
 	line-height: var(--lh-prose-leading);
 }
 
+/* Diagrams (plan map, mermaid, figures) bleed past the 46rem reading
+   column to the transcript's width minus the px-6 gutter (#136), so they
+   keep the size they had at full width. 100cqw is the transcript's width
+   (chat.tsx sets the container); min() never narrows a block. */
+.lh-bleed {
+	margin-inline: min(0px, calc(50% - 50cqw + 1.5rem));
+}
+
 /* Session-name weight (owner, fix wave round 3): with the serif toggle
    OFF, --font-title resolves to the prose font — Source Sans 3 is loaded
    as a VARIABLE font, and without an explicit weight the titles render at
@@ -295,6 +303,18 @@ body {
 
 .dock-variant {
 	animation: dock-variant-in 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* A pinned question's capped area (dock-height.ts) fades its bottom edge so
+   hidden options read as "more below"; sticky, so it vanishes at the end. */
+[data-dock-fade]::after {
+	content: "";
+	position: sticky;
+	bottom: 0;
+	display: block;
+	height: 1.5rem;
+	background: linear-gradient(to top, var(--card), transparent);
+	pointer-events: none;
 }
 
 /* ============================================================
