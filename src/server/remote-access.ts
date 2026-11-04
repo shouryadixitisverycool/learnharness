@@ -77,13 +77,14 @@ export function remoteRequestAuthorized(headers: Headers, env: Env = process.env
 }
 
 // ─── Apps only ────────────────────────────────────────────────────────────
-// LH_APPS_ONLY=1 (with server mode on): only the LearnHarness desktop and
-// iPhone apps may use the server — they append "LearnHarnessDesktop/<v>" or
-// "LearnHarnessiOS/<v>" to every request's User-Agent. This keeps ordinary
+// LH_APPS_ONLY=1 (with server mode on): only the LearnHarness desktop,
+// iPhone and Android apps may use the server — they append
+// "LearnHarnessDesktop/<v>", "LearnHarnessiOS/<v>" or
+// "LearnHarnessAndroid/<v>" to every request's User-Agent. This keeps ordinary
 // browsers out entirely; it is NOT a secret (a User-Agent can be faked), so
 // the password stays the real protection. API-token clients are exempt.
 
-const APP_USER_AGENT = /\bLearnHarness(Desktop|iOS)\/\d/;
+const APP_USER_AGENT = /\bLearnHarness(Desktop|iOS|Android)\/\d/;
 
 export function appsOnlyEnabled(env: Env = process.env): boolean {
 	return serverModeEnabled(env) && env.LH_APPS_ONLY === "1";
@@ -99,7 +100,7 @@ export function appsOnlyAllowed(headers: Headers, env: Env = process.env): boole
 }
 
 export function appsOnlyRefusal(api: boolean): Response {
-	const message = "This LearnHarness server only works in the LearnHarness desktop and iPhone apps.";
+	const message = "This LearnHarness server only works in the LearnHarness desktop, iPhone and Android apps.";
 	if (api) return Response.json({ error: message }, { status: 403, headers: { "Cache-Control": "no-store" } });
 	const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>LearnHarness</title>
 <style>:root{color-scheme:dark}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#141414;color:#e5e5e5;font:15px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;padding:16px;text-align:center}</style>
@@ -136,13 +137,21 @@ export function clearedSessionCookieHeader(): string {
 // ─── Login throttling ─────────────────────────────────────────────────────
 // In-memory, per client address: 10 failures per 15 minutes, then refuse
 // until the window passes. Single-process server, so a Map is the truth.
+//
+// The address is the LAST X-Forwarded-For hop: the one the nearest proxy
+// (tailscale serve, Caddy) appended, or the socket address Next fills in
+// when no proxy set the header. Earlier hops come from the client and can
+// be anything, so keying on them would let one client rotate addresses and
+// guess forever. Keep the server unreachable except through that proxy
+// (compose binds 127.0.0.1), or the last hop is the client's to choose too.
 
 const FAIL_WINDOW_MS = 15 * 60 * 1000;
 const MAX_FAILS = 10;
 const failures = new Map<string, { count: number; since: number }>();
 
 export function clientAddress(headers: Headers): string {
-	return headers.get("x-forwarded-for")?.split(",")[0]?.trim() || headers.get("x-real-ip") || "local";
+	const hops = (headers.get("x-forwarded-for") ?? "").split(",").map((hop) => hop.trim()).filter(Boolean);
+	return hops.at(-1) || headers.get("x-real-ip") || "local";
 }
 
 export function loginThrottled(address: string, now = Date.now()): boolean {

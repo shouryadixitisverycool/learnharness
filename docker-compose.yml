@@ -8,7 +8,15 @@ services:
     restart: unless-stopped
     env_file: .env.server
     ports:
-      - "3000:3000"
+      # Loopback only: reach it through tailscale serve or a reverse proxy.
+      # The login lockout trusts the proxy's X-Forwarded-For hop, so the
+      # port must not be reachable directly from other machines.
+      - "127.0.0.1:3000:3000"
+    # One person's server: two cores and 2 GB leave room for the rest of
+    # the machine (Chromium for demos runs inside this limit too).
+    cpus: 2
+    mem_limit: 2g
+    memswap_limit: 2g
     volumes:
       - learnharness-data:/data
     shm_size: "512mb" # headless Chromium

@@ -111,12 +111,19 @@ test("login route: sets a secure session cookie on success, throttles repeated f
 		assert(loginThrottled("10.0.0.3"));
 		const throttled = await post(env.LH_SERVER_PASSWORD, "10.0.0.3");
 		assert.match(throttled.headers.get("location") ?? "", /error=throttled/, "even the right password is refused while throttled");
+
+		// A client can't dodge the lockout by putting its own address first:
+		// the proxy's hop (last) is the one that counts.
+		for (let i = 0; i < 10; i++) recordLoginFailure("100.64.0.9");
+		const spoofed = await post(env.LH_SERVER_PASSWORD, "203.0.113.7, 100.64.0.9");
+		assert.match(spoofed.headers.get("location") ?? "", /error=throttled/);
 	});
 });
 
 test("apps only: browsers are refused before sign-in, the two apps and API tokens get through", async () => {
 	const desktopUA = "Mozilla/5.0 (Macintosh) AppleWebKit/537.36 Chrome/150 Electron/44.9.3 Safari/537.36 LearnHarnessDesktop/0.4.0";
 	const iosUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 LearnHarnessiOS/1.0";
+	const androidUA = "Mozilla/5.0 (Linux; Android 16; 2411DRN47I Build/BP2A; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/150.0 Mobile Safari/537.36 LearnHarnessAndroid/1.0";
 	const safariUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 Version/26.0 Mobile/15E148 Safari/604.1";
 	assert(appsOnlyAllowed(new Headers({ "user-agent": safariUA }), env), "off unless LH_APPS_ONLY=1");
 	const appsEnv = { ...env, LH_APPS_ONLY: "1", LH_API_TOKEN: "k".repeat(40) };
@@ -124,6 +131,7 @@ test("apps only: browsers are refused before sign-in, the two apps and API token
 	assert(!appsOnlyAllowed(new Headers(), appsEnv));
 	assert(appsOnlyAllowed(new Headers({ "user-agent": desktopUA }), appsEnv));
 	assert(appsOnlyAllowed(new Headers({ "user-agent": iosUA }), appsEnv));
+	assert(appsOnlyAllowed(new Headers({ "user-agent": androidUA }), appsEnv));
 	assert(appsOnlyAllowed(new Headers({ "user-agent": "curl/8", authorization: `Bearer ${"k".repeat(40)}` }), appsEnv));
 	assert(!appsOnlyAllowed(new Headers({ "user-agent": "LearnHarnessiOS" }), appsEnv), "needs a version");
 	assert(appsOnlyAllowed(new Headers({ "user-agent": safariUA }), { LH_APPS_ONLY: "1" }), "needs server mode too");
