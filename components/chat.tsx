@@ -14,7 +14,7 @@ import {
 	ConversationEmptyState,
 	ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import { AssistantTextResponse, Message, MessageContent } from "@/components/ai-elements/message";
 import { PathText } from "@/components/file-path-chip";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
@@ -939,7 +939,7 @@ export function Chat({
 	const [dockReserve, setDockReserve] = useState(208);
 	const syncTurns = useCallback(async () => {
 		try {
-			const res = await fetch(`/api/chats/${chatId}`);
+			const res = await fetch(`/api/chats/${chatId}?only=stats`);
 			if (!res.ok) return;
 			const record = (await res.json()) as { turns?: TurnUsage[]; pricing?: SessionPricing };
 			if (Array.isArray(record.turns)) setTurns(record.turns);
@@ -1562,7 +1562,7 @@ export function Chat({
 														const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
 														return (
 															<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
-																<MessageResponse>{part.text}</MessageResponse>
+																<AssistantTextResponse>{part.text}</AssistantTextResponse>
 															</div>
 														);
 													}
