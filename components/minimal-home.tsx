@@ -163,10 +163,11 @@ export function MinimalHome({
 								type="button"
 								onClick={() => setStudyOpen(true)}
 								data-testid="open-study-time"
+								aria-label="Study time"
 								className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent"
 							>
 								<ClockIcon className="size-3" />
-								Study time
+								<span className="lh-header-label">Study time</span>
 							</button>
 						</Hint>
 					</div>
@@ -176,10 +177,11 @@ export function MinimalHome({
 								type="button"
 								onClick={() => setChainsOpen(true)}
 								data-testid="open-chain-table"
+								aria-label="Chains"
 								className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent"
 							>
 								<ListTreeIcon className="size-3" />
-								Chains
+								<span className="lh-header-label">Chains</span>
 							</button>
 						</Hint>
 					</div>

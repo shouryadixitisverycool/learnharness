@@ -905,10 +905,11 @@ export function GraphChromeRow({
 							type="button"
 							onClick={onOpenChains}
 							data-testid="open-chain-table"
+							aria-label="Chains"
 							className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent"
 						>
 							<ListTreeIcon className="size-3" />
-							<span className="lh-chrome-label">Chains</span>
+							<span className="lh-chrome-label lh-header-label">Chains</span>
 						</button>
 					</Hint>
 				</div>
@@ -920,10 +921,11 @@ export function GraphChromeRow({
 						type="button"
 						onClick={onOpenStudy}
 						data-testid="open-study-time"
+						aria-label="Study time"
 						className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent"
 					>
 						<ClockIcon className="size-3" />
-						Study time
+						<span className="lh-header-label">Study time</span>
 					</button>
 				</Hint>
 			</div>

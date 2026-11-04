@@ -44,6 +44,10 @@
 	.lh-question-dock [role="radio"] > span:last-child,
 	.lh-question-dock [role="checkbox"] > span:last-child { min-width: 0; overflow-wrap: anywhere; }
 	[data-lh-menu] button, .lh-settings-content button.h-7 { min-height: 48px; }
+	/* The graph and home header row never wraps (owner ruling), so on a
+	   phone its buttons go icon-only, as in the iPhone app. */
+	.lh-header-label { display: none; }
+	.lh-graph-search { width: 8.5rem; }
 	.lh-question-dock [role="radio"], .lh-question-dock [role="checkbox"], .lh-practice-dock button { min-height: 48px; }
 }
 
