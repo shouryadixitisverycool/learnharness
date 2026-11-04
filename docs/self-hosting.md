@@ -14,8 +14,11 @@ cp .env.server.example .env.server   # then edit: set LH_SERVER_PASSWORD and LH_
 docker compose up -d --build
 ```
 
-Open `http://<server>:3000`, sign in with the password, then add your
-provider key and models in Settings as usual.
+Compose publishes the server on `127.0.0.1:3000` only, so other machines
+reach it through tailscale serve or a reverse proxy (see "HTTPS and reaching
+it from outside your home" below). On the server itself, open
+`http://localhost:3000`, sign in with the password, then add your provider
+key and models in Settings as usual.
 
 ## Desktop app (macOS DMG)
 
@@ -56,7 +59,9 @@ A native iPhone app lives in `ios/`. Build and install it with Xcode:
 - every page redirects to `/login` until you sign in;
 - every `/api/*` route answers `401` without a valid session;
 - a sign-in lasts 30 days per device (HttpOnly, SameSite=Lax cookie);
-- 10 wrong passwords from one address lock that address out for 15 minutes;
+- 10 wrong passwords from one address lock that address out for 15 minutes.
+  The address is the last `X-Forwarded-For` hop, the one your proxy adds,
+  so the server must only be reachable through that proxy;
 - `Authorization: Bearer <LH_API_TOKEN>` works for non-browser clients.
 
 Sign a device out with `POST /api/auth/logout`. Sign **every** device out by
@@ -65,7 +70,8 @@ rotating `LH_SESSION_SECRET` (or the password, if no secret is set).
 **Apps only.** `LH_APPS_ONLY=1` makes the server refuse everything except
 the LearnHarness desktop and iPhone apps — a browser gets "This server only
 works in the LearnHarness apps", even with the password. The apps add
-`LearnHarnessDesktop/<version>` or `LearnHarnessiOS/<version>` to their
+`LearnHarnessDesktop/<version>`, `LearnHarnessiOS/<version>` or
+`LearnHarnessAndroid/<version>` to their
 User-Agent. That tag is not a secret (it can be faked), so the password is
 still what protects the server. Requests with `LH_API_TOKEN` are exempt.
 
@@ -81,8 +87,9 @@ Don't expose port 3000 to the internet over plain HTTP — the password and
 cookie would travel unencrypted. Pick one:
 
 - **Tailscale (simplest):** install it on the server and your devices, then
-  open `http://<tailscale-name>:3000`. Traffic is encrypted and only your
-  devices can reach it. `tailscale serve --bg 3000` adds HTTPS.
+  run `tailscale serve --bg --https=8446 http://127.0.0.1:3000` and open
+  `https://<tailscale-name>:8446`. Only your devices can reach it. Don't
+  use `tailscale funnel` for it, which puts it on the public internet.
 - **Reverse proxy:** Caddy (`your.domain { reverse_proxy localhost:3000 }`)
   gets a certificate automatically. Keep SSE unbuffered (Caddy does this by
   default; for nginx set `proxy_buffering off` on `/api/`).
@@ -106,7 +113,7 @@ into the volume, plus `LearnHarness/auth.json` if you want your keys there too.
 ```bash
 npm ci && npx next build && node scripts/build-server.mjs
 LH_SERVER_PASSWORD=... LH_DATA_DIR=/srv/learnharness LH_AUTH_FILE=/srv/learnharness/auth.json \
-  HOSTNAME=0.0.0.0 PORT=3000 node .next/standalone/server.js
+  HOSTNAME=127.0.0.1 PORT=3000 node .next/standalone/server.js
 ```
 
 ## Limits
