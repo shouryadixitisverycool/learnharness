@@ -94,6 +94,13 @@ contextBridge.exposeInMainWorld("lh", {
 		return () => ipcRenderer.removeListener("lh:update-status", listener);
 	},
 	installUpdate: () => ipcRenderer.send("lh:update-install"),
+	// Settings → General → Server (docs/self-hosting.md).
+	server: {
+		current: () => ipcRenderer.invoke("lh:server:current"),
+		connect: () => ipcRenderer.invoke("lh:server:control", "connect"),
+		signOut: () => ipcRenderer.invoke("lh:server:control", "sign-out"),
+		useLocal: () => ipcRenderer.invoke("lh:server:control", "local"),
+	},
 	getUpdateState: () => ipcRenderer.invoke("lh:update:get"),
 	checkForUpdates: () => ipcRenderer.invoke("lh:update:check"),
 	onOpenSettings: (cb) => {
