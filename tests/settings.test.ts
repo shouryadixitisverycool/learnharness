@@ -149,6 +149,17 @@ describe("sanitizeUserSettings", () => {
 		assert.equal(out.appearance?.mdRendering?.italicColor, null);
 	});
 
+	it("appearance: system mode and lightBackground survive; junk drops", () => {
+		const out = sanitizeUserSettings({ appearance: { mode: "system", lightBackground: "#eeeeee" } });
+		assert.ok(out);
+		assert.equal(out.appearance?.mode, "system");
+		assert.equal(out.appearance?.lightBackground, "#eeeeee");
+		const junk = sanitizeUserSettings({ appearance: { mode: "sepia", lightBackground: "nope" } });
+		assert.ok(junk);
+		assert.equal(junk.appearance?.mode, undefined);
+		assert.equal(junk.appearance?.lightBackground, null);
+	});
+
 	it("empty strings/whitespace fontFamily → null (Source Sans 3); wrong-type → null too (the default)", () => {
 		for (const bad of ["", "   ", 12, { name: "x" }]) {
 			const out = sanitizeUserSettings({ appearance: { fontFamily: bad } });
@@ -212,5 +223,22 @@ describe("sanitizeUserSettings", () => {
 			"extractor",
 			"auditor",
 		]);
+	});
+});
+
+describe("studyTime settings", () => {
+	it("factory defaults", () => {
+		assert.deepEqual(FACTORY_SETTINGS.studyTime, { idleMinutes: 5, weekStart: "monday" });
+	});
+
+	it("sanitize: clamps and rounds idleMinutes, drops junk, keeps valid weekStart", () => {
+		const run = (studyTime: unknown) => sanitizeUserSettings({ version: 1, studyTime })?.studyTime;
+		assert.deepEqual(run({ idleMinutes: 0 }), { idleMinutes: 1 });
+		assert.deepEqual(run({ idleMinutes: 500 }), { idleMinutes: 60 });
+		assert.deepEqual(run({ idleMinutes: 7.6 }), { idleMinutes: 8 });
+		assert.deepEqual(run({ idleMinutes: "9", weekStart: "friday" }), {});
+		assert.deepEqual(run({ idleMinutes: Number.NaN }), {});
+		assert.deepEqual(run({ weekStart: "sunday" }), { weekStart: "sunday" });
+		assert.equal(run(undefined), undefined);
 	});
 });

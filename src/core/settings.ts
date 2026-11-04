@@ -382,11 +382,13 @@ export interface MdRenderingSettings {
 
 /** Appearance settings — mode, colors, type, markdown emphasis. */
 export interface AppearanceSettings {
-	/** "dark" | "light" (default dark). */
-	mode?: "dark" | "light";
+	/** "dark" | "light" | "system" (follow the OS; default dark). */
+	mode?: "dark" | "light" | "system";
 	/** The one user-chosen color; everything else derives per-mode in code.
 	 *  null = the mode's default background. */
 	background?: string | null;
+	/** The light variant's background; null = its default (#f5f5f3). `background` is the dark one. */
+	lightBackground?: string | null;
 	/** The main reading font (everything that is Source Sans 3 today), by
 	 *  name — user-chosen from installed fonts. null = Source Sans 3. */
 	fontFamily?: string | null;
@@ -461,6 +463,12 @@ export interface CompactionSettings {
 	thresholdTokens?: number;
 }
 
+/** Study-time settings: the idle limit (whole minutes, 1–60) and the week start. */
+export interface StudyTimeSettings {
+	idleMinutes?: number;
+	weekStart?: "monday" | "sunday";
+}
+
 /** THE record. Every section optional (delta); unknown top-level keys are
  *  preserved verbatim by the sanitizer (forward-compat with newer records). */
 export interface UserSettings {
@@ -477,6 +485,7 @@ export interface UserSettings {
 	appearance?: AppearanceSettings;
 	graph?: GraphSettings;
 	compaction?: CompactionSettings;
+	studyTime?: StudyTimeSettings;
 	[key: string]: unknown;
 }
 
@@ -490,8 +499,9 @@ export interface FactorySettings {
 	general: Required<GeneralSettings>;
 	dictation: Required<DictationSettings>;
 	appearance: {
-		mode: "dark" | "light";
+		mode: "dark" | "light" | "system";
 		background: string | null;
+		lightBackground: string | null;
 		fontFamily: string | null;
 		proseFontSize: number;
 		sessionNameSerif: boolean;
@@ -503,6 +513,7 @@ export interface FactorySettings {
 	};
 	graph: Required<GraphSettings>;
 	compaction: Required<CompactionSettings>;
+	studyTime: Required<StudyTimeSettings>;
 }
 
 export const FACTORY_SETTINGS: FactorySettings = {
@@ -512,6 +523,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	appearance: {
 		mode: "dark",
 		background: null, // the dark default (#141414) lives in the mode's derivation curve
+		lightBackground: null, // the light default (#f5f5f3) lives in the light curve
 		fontFamily: null, // Source Sans 3
 		proseFontSize: 16,
 		sessionNameSerif: true,
@@ -519,6 +531,7 @@ export const FACTORY_SETTINGS: FactorySettings = {
 	},
 	graph: { enabled: true, rendering: true, extractionChunkTokens: 4096 },
 	compaction: { thresholdTokens: 150_000 },
+	studyTime: { idleMinutes: 5, weekStart: "monday" },
 };
 
 /** The chunk budget's validated floor (GraphSettings.extractionChunkTokens
@@ -736,8 +749,9 @@ function sanitizeMdRendering(raw: unknown): MdRenderingSettings {
 
 function sanitizeAppearance(raw: Record<string, unknown>): AppearanceSettings {
 	const out: AppearanceSettings = {};
-	if (raw.mode === "dark" || raw.mode === "light") out.mode = raw.mode;
+	if (raw.mode === "dark" || raw.mode === "light" || raw.mode === "system") out.mode = raw.mode;
 	if (raw.background !== undefined) out.background = sanitizeHexOrNull(raw.background);
+	if (raw.lightBackground !== undefined) out.lightBackground = sanitizeHexOrNull(raw.lightBackground);
 	if (raw.fontFamily !== undefined) {
 		out.fontFamily = typeof raw.fontFamily === "string" && raw.fontFamily.trim() ? raw.fontFamily : null;
 	}
@@ -791,6 +805,22 @@ function sanitizeCompaction(raw: Record<string, unknown>): CompactionSettings {
 	return out;
 }
 
+/** Bounds of the study idle limit, in whole minutes. */
+export const STUDY_IDLE_MINUTES_MIN = 1;
+export const STUDY_IDLE_MINUTES_MAX = 60;
+
+/** clamp-never-reject: a finite idleMinutes rounds and clamps to 1–60; any
+ *  other idleMinutes, or a weekStart other than the two values, drops. */
+function sanitizeStudyTime(raw: Record<string, unknown>): StudyTimeSettings {
+	const out: StudyTimeSettings = {};
+	const minutes = raw.idleMinutes;
+	if (typeof minutes === "number" && Number.isFinite(minutes)) {
+		out.idleMinutes = Math.min(STUDY_IDLE_MINUTES_MAX, Math.max(STUDY_IDLE_MINUTES_MIN, Math.round(minutes)));
+	}
+	if (raw.weekStart === "monday" || raw.weekStart === "sunday") out.weekStart = raw.weekStart;
+	return out;
+}
+
 /**
  * Coerce arbitrary JSON (disk file, network body) into a valid delta record:
  * known fields validated strictly (invalid ones drop/clamp per module doc),
@@ -837,6 +867,9 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 		if (r.compaction !== undefined && r.compaction !== null && typeof r.compaction === "object") {
 			out.compaction = sanitizeCompaction(r.compaction as Record<string, unknown>);
 		}
+	}
+	if (r.studyTime !== null && typeof r.studyTime === "object" && !Array.isArray(r.studyTime)) {
+		out.studyTime = sanitizeStudyTime(r.studyTime as Record<string, unknown>);
 	}
 	// Unknown top-level keys ride along untouched (forward-compat). One
 	// known-DEAD key is stripped instead of riding: `chat` (the old
