@@ -8,9 +8,10 @@ type ServerChoice = { mode: "local" } | { mode: "remote"; url: string };
 
 /** The desktop app's server choice (docs/self-hosting.md): the menu's
  *  Connect / Sign Out / Use This Computer, here so every platform can
- *  reach them (Linux and Windows hide the menu bar). Desktop only: the
- *  row is absent without the preload bridge. Each action ends in the
- *  main process (connect window, cookie clear, relaunch). */
+ *  reach them (Linux and Windows hide the menu bar). The row is absent
+ *  without a native bridge: the desktop preload, or the Android app's
+ *  bridge, which has no local server and so no `useLocal`. Each action
+ *  ends in the host app (connect window, cookie clear, relaunch). */
 export function ServerSettings() {
 	const [choice, setChoice] = useState<ServerChoice | null>(null);
 	const [failed, setFailed] = useState(false);
@@ -41,7 +42,9 @@ export function ServerSettings() {
 				{remote && (
 					<>
 						<Button type="button" size="xs" variant="outline" className="cursor-pointer" data-testid="server-sign-out" onClick={() => run(server?.signOut)}>Sign out</Button>
-						<Button type="button" size="xs" variant="outline" className="cursor-pointer" data-testid="server-use-local" onClick={() => run(server?.useLocal)}>Use this computer</Button>
+						{server?.useLocal && (
+							<Button type="button" size="xs" variant="outline" className="cursor-pointer" data-testid="server-use-local" onClick={() => run(server.useLocal)}>Use this computer</Button>
+						)}
 					</>
 				)}
 				<Button type="button" size="xs" variant="outline" className="cursor-pointer" data-testid="server-connect" onClick={() => run(server?.connect)}>Connect…</Button>

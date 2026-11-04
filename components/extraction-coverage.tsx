@@ -8,6 +8,7 @@ import { formatTokens } from "@/components/usage-format";
 import { Hint } from "@/components/ui/hint";
 import { timeAgo } from "@/components/sidebar";
 import { resolveSettings } from "@/src/core";
+import { MenuShell } from "@/components/menu-shell";
 
 /**
  * The extraction-coverage surfaces (extraction-UX redesign, owner-locked
@@ -246,7 +247,7 @@ export function CoverageRing({ chatId, refreshKey = 0 }: { chatId: string; refre
 	const [open, setOpen] = useState(false);
 	const [nonce, setNonce] = useState(0);
 	const rootRef = useRef<HTMLDivElement>(null);
-	usePopoverDismiss(rootRef, open, () => setOpen(false));
+	usePopoverDismiss(rootRef, open, () => setOpen(false), '[data-testid="coverage-ring-popover"]');
 
 	// The activity/refresh chain (the dispatch's seam): runs can fire from
 	// OTHER surfaces (the sidebar menu's Extract, the turn pipeline, another
@@ -317,12 +318,14 @@ export function CoverageRing({ chatId, refreshKey = 0 }: { chatId: string; refre
 				</button>
 			</Hint>
 			{open && (
-				<div
-					data-testid="coverage-ring-popover"
-					className="absolute top-full right-0 z-40 mt-1.5 w-64 rounded-xl border bg-card p-3 text-xs shadow-xl"
+				<MenuShell
+					anchorRef={rootRef}
+					testid="coverage-ring-popover"
+					preferredSide="down"
+					menuClass="w-64 rounded-xl border bg-card p-3 text-xs shadow-xl"
 				>
 					<CoverageRingDetail coverage={coverage} chunkTokens={graph.chunkTokens} />
-				</div>
+				</MenuShell>
 			)}
 		</div>
 	);

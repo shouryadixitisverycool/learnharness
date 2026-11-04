@@ -220,7 +220,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 
 	/* ── the expanded form ── */
 	return (
-		<div data-testid="practice-dock" data-problem={problemCallId}>
+		<div data-testid="practice-dock" data-problem={problemCallId} className="lh-practice-dock">
 			{statement("max-h-[var(--dock-max-h,40vh)]")}
 
 			{hasRef && (

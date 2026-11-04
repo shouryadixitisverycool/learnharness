@@ -195,8 +195,8 @@ export function SourceFolderTree<T extends TreeSource>({ groups, directory, quer
 					</button>
 					{onAction ? <EditableSourceName name={folder.name} onSave={(name) => onAction({ action: "rename-folder", id: folder.id, name })} />
 						: <span className="min-w-0 flex-1 truncate text-sm font-medium">{folder.name}</span>}
-					<span className="w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{members.length}</span>
-					<span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{folder.createdAt.slice(0, 10)}</span>
+					<span className="lh-chain-column-props w-14 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{members.length}</span>
+					<span className="lh-chain-column-created w-20 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{folder.createdAt.slice(0, 10)}</span>
 				</SourceDragRow>
 				{open && hasChildren && <div data-testid={`folder-thread-${folder.id}`} className="pointer-events-none absolute bottom-[8px] top-[23px] w-px bg-border/50" style={{ left: 37 + depth * 36 }} />}
 				{open && renderLevel(folder.id, depth + 1)}

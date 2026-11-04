@@ -16,7 +16,7 @@ const q = (host: ParentNode, id: string) => host.querySelector<HTMLElement>(`[da
 
 type Choice = { mode: "local" } | { mode: "remote"; url: string };
 
-function bridge(choice: Choice, fail: Partial<Record<"connect" | "signOut" | "useLocal", boolean>> = {}) {
+function bridge(choice: Choice, fail: Partial<Record<"connect" | "signOut" | "useLocal", boolean>> = {}, { local = true } = {}) {
 	const calls: string[] = [];
 	const op = (name: "connect" | "signOut" | "useLocal") => async () => {
 		calls.push(name);
@@ -24,7 +24,7 @@ function bridge(choice: Choice, fail: Partial<Record<"connect" | "signOut" | "us
 	};
 	window.lh = {
 		expandWindow() {},
-		server: { current: async () => choice, connect: op("connect"), signOut: op("signOut"), useLocal: op("useLocal") },
+		server: { current: async () => choice, connect: op("connect"), signOut: op("signOut"), ...(local ? { useLocal: op("useLocal") } : {}) },
 	};
 	return calls;
 }
@@ -72,6 +72,16 @@ describe("Settings server row", () => {
 		await click(q(host, "server-use-local"));
 		await click(q(host, "server-connect"));
 		assert.deepEqual(calls, ["signOut", "useLocal", "connect"]);
+	});
+
+	it("without a local server (the Android app), offers sign out and Connect but not switching back", async () => {
+		const calls = bridge({ mode: "remote", url: "https://dixithome.example.ts.net:8446" }, {}, { local: false });
+		const host = await mount();
+		assert.match(q(host, "row-server")!.textContent ?? "", /Server: dixithome\.example\.ts\.net:8446/);
+		assert.equal(q(host, "server-use-local"), null);
+		await click(q(host, "server-sign-out"));
+		await click(q(host, "server-connect"));
+		assert.deepEqual(calls, ["signOut", "connect"]);
 	});
 
 	it("keeps a failure message generic", async () => {

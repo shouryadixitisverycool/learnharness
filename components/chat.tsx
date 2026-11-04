@@ -26,6 +26,7 @@ import { MalformedQuestion } from "@/components/malformed-question";
 import { artifactRenderers } from "@/components/artifacts";
 import { SubagentSteerCard } from "@/components/artifacts/steer-card";
 import { ChatSessionComposer } from "@/components/composer";
+import { readComposerDraft, writeComposerDraft } from "@/components/composer-draft";
 import { useEnterSubmits } from "@/components/enter-submits";
 import { blurAfterPointerClick } from "@/components/focus-hygiene";
 import { dockStateKey } from "@/components/dock-state-key";
@@ -615,11 +616,13 @@ export function Chat({
 	const textRef = useRef("");
 	const applyText = useCallback((v: string) => {
 		textRef.current = v;
+		if (typeof window !== "undefined") try { writeComposerDraft(window.localStorage, chatId, v); } catch { /* storage can be disabled by the host */ }
 		setComposerDraftRevision((revision) => revision + 1);
-	}, []);
+	}, [chatId]);
 	const recordComposerText = useCallback((v: string) => {
 		textRef.current = v;
-	}, []);
+		if (typeof window !== "undefined") try { writeComposerDraft(window.localStorage, chatId, v); } catch { /* storage can be disabled by the host */ }
+	}, [chatId]);
 	// Saved slot completeness is live, but the session's selected route
 	// comes from its own ordinary model control, never today's Strong pin.
 	const { catalog, configured, zeroKeys } = useModelSetup(initialConfigured);
@@ -685,6 +688,13 @@ export function Chat({
 		}
 		deliverOpeningPrompt(prompt!);
 	}, [chatId, initialPrompt, initialMessages, initiallyInFlight, deliverOpeningPrompt, applyText]);
+
+	useEffect(() => {
+		if (textRef.current || openingDraftRef.current || typeof window === "undefined") return;
+		let draft = "";
+		try { draft = readComposerDraft(window.localStorage, chatId); } catch { /* storage can be disabled by the host */ }
+		if (draft) applyText(draft);
+	}, [chatId, applyText]);
 
 	useEffect(() => {
 		if (!hasConfirmedConversation) return;
