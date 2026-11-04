@@ -33,7 +33,7 @@ import { providerEventNote } from "../agent/provider-events.ts";
 import { effectiveSettings, stores } from "./stores.ts";
 import { searchAvailable, searchProvider } from "./search.ts";
 import { providerKeyPresent } from "./keys.ts";
-import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
+import { isCliProvider } from "../core/contracts/cursor.ts";
 import {
 	extractionEnabled,
 	graphToolsEnabled,
@@ -93,7 +93,7 @@ function systemPromptTokens(record: ChatRecord): number {
 /** Fresh check only at new background-run admission; never cancel a run
  * already in progress when the opt-in is switched off. */
 function connectionBackgroundAllowed(provider: string): boolean {
-	return subscriptionBackgroundAllowed(provider) && (provider !== CLAUDE_CODE_PROVIDER || providerKeyPresent(provider));
+	return subscriptionBackgroundAllowed(provider) && (!isCliProvider(provider) || providerKeyPresent(provider));
 }
 function settlementErrorText(error: unknown): string {
 	return error instanceof TurnPersistenceError ? error.message : "An error occurred.";
