@@ -111,8 +111,9 @@ describe("desktop window chrome", () => {
 		runInNewContext(readFileSync(new URL("../electron/preload.cjs", import.meta.url), "utf8"), context);
 		assert.equal(bridge.platform, "win32");
 		assert.deepEqual(Object.keys(bridge).sort(), [
-			"chatgpt", "checkForUpdates", "expandWindow", "getPathForFile", "getUpdateState", "getZoom", "installUpdate", "onOpenSettings", "onUpdateStatus", "onZoom", "platform", "setAppearance", "subscriptions",
+			"chatgpt", "checkForUpdates", "expandWindow", "getPathForFile", "getUpdateState", "getZoom", "installUpdate", "onOpenSettings", "onUpdateStatus", "onZoom", "platform", "server", "setAppearance", "subscriptions",
 		]);
+		assert.deepEqual(Object.keys(bridge.server as object).sort(), ["connect", "current", "signOut", "useLocal"]);
 		const appearance = { mode: "system", background: null, lightBackground: "#eeeeee" };
 		(bridge.setAppearance as (a: unknown) => void)(appearance);
 		assert.deepEqual(sent, [["lh:appearance", appearance]]);
@@ -181,7 +182,8 @@ describe("desktop packaging policy", () => {
 		const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 		assert.equal(pkg.author.name, "Amos Blomqvist");
 		assert.equal(pkg.author.email, "255718537+amosblomqvist@users.noreply.github.com");
-		assert.equal(pkg.homepage, "https://github.com/amosblomqvist/learnharness");
+		// Release notes and updates come from this fork (#10).
+		assert.equal(pkg.homepage, "https://github.com/shouryadixitisverycool/learnharness");
 		assert.equal(pkg.desktopName, "learnharness.desktop");
 	});
 });
