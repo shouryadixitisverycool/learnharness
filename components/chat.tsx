@@ -2,6 +2,7 @@
 
 import { createContext, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useChatSession } from "@/components/session";
+import { useStudyTracker } from "@/components/use-study-tracker";
 import { visibleQueuedSteers } from "@/components/session-core";
 import { SetupDialog } from "@/components/setup-dialog";
 import { Hint } from "@/components/ui/hint";
@@ -13,7 +14,7 @@ import {
 	ConversationEmptyState,
 	ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import { AssistantTextResponse, Message, MessageContent } from "@/components/ai-elements/message";
 import { PathText } from "@/components/file-path-chip";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
@@ -39,6 +40,7 @@ import { useServerEvent, useServerResync } from "@/components/server-events";
 import { useSessionTitle } from "@/components/session-title";
 import {
 	isProviderKeyRefusal,
+	chatHasStarted,
 	firstSourceTextParts,
 	cliContextWindowOf,
 	messageAnchorId,
@@ -263,6 +265,7 @@ export function Chat({
 	// turn stream is the VERBATIM AgentEvent passthrough the server emits.
 	const { messages, nativeMessages, hasConfirmedConversation, contextTokens, send, continueIfOwed, steer, steerQueue, submitAnswer, dismissQuestion, dismissProblem, questionDraft, saveQuestionDraft, setMessages, adoptRecord, status, error, stop, clearError, resumeStream, setReattachSettled } =
 		useChatSession({ chatId, initialMessages, initialError, initiallyInFlight });
+	useStudyTracker(chatId, chatHasStarted(nativeMessages));
 
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
 	const scrollContextRef = useRef<StickToBottomContext | null>(null);
@@ -952,7 +955,7 @@ export function Chat({
 	const [dockReserve, setDockReserve] = useState(208);
 	const syncTurns = useCallback(async () => {
 		try {
-			const res = await fetch(`/api/chats/${chatId}`);
+			const res = await fetch(`/api/chats/${chatId}?only=stats`);
 			if (!res.ok) return;
 			const record = (await res.json()) as { turns?: TurnUsage[]; pricing?: SessionPricing };
 			if (Array.isArray(record.turns)) setTurns(record.turns);
@@ -1587,7 +1590,7 @@ export function Chat({
 														const anchor = sourceId && sourceTextParts.get(sourceId) === part.id ? messageAnchorId(sourceId) : undefined;
 														return (
 															<div key={part.id || pi} id={anchor} data-source-message-id={sourceId ?? undefined} className="lh-source-passage">
-																<MessageResponse>{part.text}</MessageResponse>
+																<AssistantTextResponse>{part.text}</AssistantTextResponse>
 															</div>
 														);
 													}
@@ -1917,7 +1920,7 @@ export type EscAbortTarget = "mermaid" | "plan" | "setup" | "question" | "proble
  */
 export function initialPromptOwed(messages: readonly { role: string }[], prompt: string | undefined): boolean {
 	if (!prompt) return false;
-	return !messages.some((m) => m.role === "user" || m.role === "assistant");
+	return !chatHasStarted(messages);
 }
 
 export function escAbortTarget(s: {
@@ -2506,8 +2509,9 @@ function DockOverlay({
 								/>
 							) : practice ? (
 								<PracticeDock
+									key={practice.toolCallId}
 									problemCallId={practice.toolCallId}
-									input={practice.input as { statement: string }}
+									input={practice.input as { statement: string; reference?: string }}
 									expanded={expanded}
 									onExpand={() => {
 										setExpanded(true);

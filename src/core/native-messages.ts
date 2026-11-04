@@ -452,7 +452,7 @@ export function modelSolutionForConclude(
 export function problemInputForConclude(
 	messages: readonly LhMessage[],
 	concludeCallId: string,
-): { statement?: unknown; mode?: unknown; target?: unknown; modelSolution?: unknown } | undefined {
+): { statement?: unknown; mode?: unknown; target?: unknown; modelSolution?: unknown; reference?: unknown } | undefined {
 	let mi = messages.findIndex(
 		(m) =>
 			(m as { role?: string }).role === "assistant" &&
@@ -471,7 +471,7 @@ export function problemInputForConclude(
 			if (block.type !== "toolCall" || block.name !== PRACTICE_PROBLEM_TOOL) continue;
 			if (!clean.has(block.id)) continue; // a refused pose revealed nothing
 			return (block.arguments ?? undefined) as
-				| { statement?: unknown; mode?: unknown; target?: unknown; modelSolution?: unknown }
+				| { statement?: unknown; mode?: unknown; target?: unknown; modelSolution?: unknown; reference?: unknown }
 				| undefined;
 		}
 	}
@@ -897,6 +897,13 @@ export function reconstructRequestCause(messages: readonly LhMessage[]): Reconst
 		history.push(message);
 	}
 	return resolve();
+}
+
+/** A completed generation with no prose or tool call has not responded to
+ * the learner. Thinking (including encrypted reasoning) alone is not output. */
+export function isEmptyAssistantCompletion(message: AgentMessage): boolean {
+	return message.role === "assistant" && message.stopReason === "stop" &&
+		message.content.every((block) => block.type === "thinking" || (block.type === "text" && !block.text.trim()));
 }
 
 export function needsContinuation(messages: readonly LhMessage[]): boolean {

@@ -265,6 +265,18 @@ describe("render smoke tests", () => {
 		assert.match(html, /Your answer/, "labeled as the answer");
 		assert.ok(!html.includes('data-testid="thinking-field"'), "no thinking field in text mode (v1)");
 		assert.ok(!html.includes("⌘/Ctrl"), "no dump shortcut hint — Enter already submits");
+		assert.ok(!html.includes('data-testid="confidence-slider"'), "ask has no right answer — no probability");
+	});
+
+	it("text-mode explain carries the confidence slider, above the answer field", () => {
+		const html = renderDock({
+			toolName: "explain",
+			toolCallId: "e2",
+			input: { question: "Why does the null result matter?", correctAnswer: "It ruled out the aether." } as never,
+		});
+		assert.ok(html.includes('data-testid="confidence-slider"'), "free recall states a probability too");
+		assert.ok(html.includes("50%"), "resting at the coin flip, same default as quiz");
+		assert.ok(html.indexOf("confidence-slider") < html.indexOf('data-testid="answer-field"'), "above the field");
 	});
 
 	it("AnsweredCard grades quiz answers (✓/✗ + explanation)", () => {
@@ -298,6 +310,23 @@ describe("render smoke tests", () => {
 		const ask = buildAnswer(askQD(), { other: "Shaky" });
 		const askHtml = renderToStaticMarkup(<AnsweredCard answer={ask} />);
 		assert.ok(!askHtml.includes("answered-confidence"), "ask never had one");
+	});
+
+	it("AnsweredCard shows the rail on explain answers with confidence too", () => {
+		const explainQD: QuestionData = {
+			id: "e1",
+			kind: "explain",
+			question: "Explain why the null result matters.",
+			mode: "text",
+			options: [],
+			committedAnswer: "It ruled out the luminiferous aether.",
+			createdAt: new Date().toISOString(),
+		};
+		const html = renderToStaticMarkup(
+			<AnsweredCard answer={buildAnswer(explainQD, { text: "Something about light?", confidence: 70 })} />,
+		);
+		assert.match(html, /data-testid="answered-confidence"/);
+		assert.match(html, /70%/);
 	});
 
 	it("AnsweredCard renders the learner's own Other answer AS an option row", () => {
@@ -451,6 +480,32 @@ describe("teach-check reveal (W5 phase separation)", () => {
 		assert.match(html, /Open/, "a clear reveal action");
 	});
 
+	it("renders math in the collapsed teach-check teaser", () => {
+		const html = renderToStaticMarkup(
+			<QuestionDock
+				toolName="quiz"
+				toolCallId="math-teaser"
+				input={{
+					...quizInput,
+					question: String.raw`A gas occupies
+\(4.0\,\text{L}\) at \(3.0\,\text{atm}\) and \(400\,\text{K}\). The temperature is
+changed and the final volume must be calculated from the combined gas law.`,
+				} as never}
+				expanded={false}
+				reveal
+				onExpand={() => {}}
+				onSubmit={() => {}}
+			/>,
+		);
+		const bar = html.match(/<button[^>]*data-testid="teach-check-reveal"[\s\S]*?<\/button>/)?.[0];
+		assert.ok(bar, "the collapsed check invitation is rendered");
+		assert.ok(bar.includes('class="katex"'), "math in the teaser renders through KaTeX");
+		assert.ok(!bar.includes("textL") && !bar.includes("textatm"), "LaTeX commands are not shown as plain text");
+		assert.ok(bar.includes("whitespace-nowrap"), "the teaser prevents rendered text from wrapping");
+		assert.ok(bar.includes("text-ellipsis"), "the teaser trails off when it exceeds one line");
+		assert.ok(!bar.includes("<br"), "source newlines are flattened rather than rendered as forced line breaks");
+	});
+
 	it("probe questions keep the plain collapsed bar (no invitation copy)", () => {
 		const html = renderToStaticMarkup(
 				<QuestionDock
@@ -463,6 +518,7 @@ describe("teach-check reveal (W5 phase separation)", () => {
 				/>,
 		);
 		assert.ok(html.includes('data-testid="question-dock-bar"'), "the scroll-collapse strip");
+		assert.match(html, /data-testid="question-dock-bar"[^>]*items-baseline/, "label and actions align with the teaser text baseline");
 		assert.ok(!html.includes("Check your understanding"), "no invitation copy outside teach phase");
 		assert.match(html, /Answer/, "the strip keeps its Answer affordance");
 	});
@@ -514,6 +570,20 @@ describe("probe-done card", () => {
 			<ProbeDoneCard part={{ state: "input-available", input: { assessment: validAssessment } } as never} />,
 		);
 		assert.match(html, /modal logic basics/);
+	});
+
+	it("renders math in the strand, assessment, and summary", () => {
+		const html = renderToStaticMarkup(
+			<ProbeDoneCard part={{ state: "output-available", input: { assessment: {
+				strands: [{ strand: "Compare $x$", assessment: "Understands $y$" }],
+				summary: "Review\n\n$$\nz=1\n$$",
+			} }, output: { ok: true } }} />,
+		);
+		assert.equal((html.match(/class="katex"/g) ?? []).length, 3);
+		assert.ok(html.includes("katex-display"), "display math in the summary renders as display math");
+		assert.match(html, /Compare/);
+		assert.match(html, /Understands/);
+		assert.match(html, /Review/);
 	});
 
 	it("a REJECTED assessment (the stringified live shape) renders the retry note, never the garbage", () => {

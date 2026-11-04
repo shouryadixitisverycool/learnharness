@@ -58,13 +58,13 @@ export function SubagentSteerCard({ message }: { message: LhViewMessage }) {
 		case "demo":
 			return (
 				<div className="lh-bleed">
-					<DemoOutputCard output={data.result} messageId={message.id} initialInverted={data.ui?.inverted ?? false} />
+					<DemoOutputCard output={data.result} messageId={message.id} initialPin={data.ui?.inverted} />
 				</div>
 			);
 		case "visual":
 			return (
 				<div className="lh-bleed">
-					<VisualOutputCard output={data.result} messageId={message.id} initialInverted={data.ui?.inverted ?? false} />
+					<VisualOutputCard output={data.result} messageId={message.id} initialPin={data.ui?.inverted} />
 				</div>
 			);
 	}

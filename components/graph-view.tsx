@@ -66,16 +66,18 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { NotesImportControl, NotesImportErrors, NotesImportNotices, useNotesImport } from "@/components/notes-import.tsx";
 import Link from "next/link";
-import { FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, WaypointsIcon } from "lucide-react";
+import { ClockIcon, FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, SettingsIcon, WaypointsIcon } from "lucide-react";
 import { incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
 import { planCostLabel } from "@/components/usage-format";
-import { GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
+import { CLUSTER_LIGHTNESS, GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
+import { useAppearance } from "@/components/settings/appearance";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { useActivity } from "@/components/activity-dock";
 import { useServerEvent, useServerResync } from "@/components/server-events";
 import { MenuShell } from "@/components/menu-shell.tsx";
 import { DeleteNodeDialog } from "@/components/delete-node-dialog.tsx";
 import { ChainTableOverlay } from "@/components/chain-table.tsx";
+import { StudyTimeOverlay } from "@/components/study-time-overlay";
 import { Hint } from "@/components/ui/hint";
 import {
 	ARROW_LENGTH_LADDER,
@@ -848,6 +850,7 @@ export function GraphChromeRow({
 	settings,
 	changeSettings,
 	onOpenChains,
+	onOpenStudy,
 }: {
 	isEmpty: boolean;
 	query: string;
@@ -863,6 +866,8 @@ export function GraphChromeRow({
 	/** Opens the chain table overlay (the chains-overlay plan,
 	 *  2026-09-29). */
 	onOpenChains: () => void;
+	/** Opens the Study time overlay (always rendered, even when empty). */
+	onOpenStudy: () => void;
 }) {
 	return (
 		<>
@@ -907,6 +912,21 @@ export function GraphChromeRow({
 						</button>
 					</Hint>
 				</div>
+			{/* Study time — own container like Chains, but ALWAYS rendered
+			    (study history does not depend on the graph). */}
+			<div className="shrink-0 rounded-xl border bg-card/85 px-1 py-[3px] shadow-lg backdrop-blur">
+				<Hint label="Your study time" side="bottom">
+					<button
+						type="button"
+						onClick={onOpenStudy}
+						data-testid="open-study-time"
+						className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-xs text-muted-foreground transition-colors hover:bg-accent"
+					>
+						<ClockIcon className="size-3" />
+						Study time
+					</button>
+				</Hint>
+			</div>
 			{/* Import notes — its own container (36px, header band); ALWAYS
 			    rendered (the empty-graph ruling above — the entry point). */}
 			<NotesImportControl importing={importing} onImportFiles={onImportFiles} />
@@ -943,6 +963,7 @@ export function GraphView({
 	const containerRef = useRef<HTMLDivElement | null>(null);
 	const canvasRef = useRef<HTMLCanvasElement | null>(null);
 	const cardRef = useRef<HTMLDivElement | null>(null);
+	const { resolvedMode } = useAppearance();
 	const [snapshot, setSnapshot] = useState<GraphSnapshot | null>(null);
 	const [selected, setSelected] = useState<Selection | null>(null);
 	// The latest snapshot for the renderer's click callbacks (they are
@@ -1037,6 +1058,7 @@ export function GraphView({
 	// The chain table overlay (chains-overlay plan, 2026-09-29) —
 	// component-local: a browsing surface, not graph state.
 	const [chainsOpen, setChainsOpen] = useState(false);
+	const [studyOpen, setStudyOpen] = useState(false);
 	useEffect(() => {
 		if (chainsOpen) return;
 		const onFind = () => searchInputRef.current?.focus();
@@ -1383,6 +1405,9 @@ export function GraphView({
 	// Feed #1 — data: positions + edges + clusters + resolved colors. Runs
 	// after the layout effect (same commit, declaration order) and after
 	// the construct effect, so the renderer exists and positions are fresh.
+	// resolvedMode re-runs it: the token hexes and the cluster lightness are
+	// per mode (the provider swaps the <html> class in a LAYOUT effect, so
+	// the computed tokens are already the new mode's when this one runs).
 	useEffect(() => {
 		const renderer = rendererRef.current;
 		const positions = posRef.current;
@@ -1403,11 +1428,12 @@ export function GraphView({
 				edge: tokenHex("--ring"),
 				label: tokenHex("--muted-foreground"),
 				hoverText: tokenHex("--foreground"),
+				clusterLightness: CLUSTER_LIGHTNESS[resolvedMode],
 			},
 			// Match the app typography (Geist via the body's stack).
 			fontFamily: getComputedStyle(document.body).fontFamily,
 		});
-	}, [snapshot, isEmpty]);
+	}, [snapshot, isEmpty, resolvedMode]);
 
 	// Feed #2 — settings: just marks the frame dirty. No rebuild, no
 	// re-layout, no camera touch (the whole point of the new renderer).
@@ -1584,6 +1610,7 @@ export function GraphView({
 					settings={settings}
 					changeSettings={changeSettings}
 					onOpenChains={() => setChainsOpen(true)}
+					onOpenStudy={() => setStudyOpen(true)}
 				/>
 			</div>
 
@@ -1693,6 +1720,8 @@ export function GraphView({
 					}
 					onPracticeSelectionChange?.(picked);
 				}}
-			/>		</div>
+			/>
+			<StudyTimeOverlay open={studyOpen} onClose={() => setStudyOpen(false)} />
+		</div>
 	);
 }
