@@ -28,12 +28,14 @@
  * turn rides one composition.
  */
 
-import type { QuestionAnswerData } from "./question-core.ts";
+import { notYetAnswer, questionAllowsAskBefore, type QuestionAnswerData } from "./question-core.ts";
+import { phaseAt3Lh } from "./phases.ts";
 import type { LhMessage } from "./native-messages.ts";
 import {
 	activeProblemOf,
 	concludedByDismissalPair,
 	isSideQuestionMarker,
+	danglingQuestionCount,
 	danglingQuestionOf,
 	newAnswerResult,
 	newNextMessage,
@@ -41,6 +43,7 @@ import {
 	newThinkingMessage,
 	newUserMessage,
 	newMessageId,
+	isEmptyAssistantCompletion,
 	questionCallsOf,
 	pendingProblemDismissalOf,
 } from "./native-messages.ts";
@@ -66,7 +69,13 @@ export type ChatInput =
 	 *  explicit go-ahead during the between-problems pause — the Next
 	 *  chip or Enter on an empty composer. Practice sessions only, and
 	 *  only with nothing active (mid-problem input rides the dock). */
-	| { type: "next" };
+	| { type: "next" }
+	/** The learner asks about the teaching while a teach-phase check sits
+	 *  closed, or while a prediction owns the dock. Closes that one call as
+	 *  notYet, then appends his message — the result stays adjacent to the
+	 *  call. Refused when it is not the only open question, or when the
+	 *  call is not a teach-phase quiz or explain. */
+	| { type: "ask-before-check"; toolCallId: string; text: string };
 
 /** A wake-pipeline steer delivery — same turn composition, server-origin.
  *  Wave C (2026-09-26): the idle wake carries EVERY queued marker as its
@@ -203,6 +212,14 @@ export function parseChatInput(input: unknown): ChatInput {
 			return { type: "thinking", problemCallId: i.problemCallId, text: i.text };
 		case "next":
 			return { type: "next" };
+		case "ask-before-check":
+			if (typeof i.toolCallId !== "string" || i.toolCallId.length === 0) {
+				throw new ChatInputError("ask-before-check input requires toolCallId");
+			}
+			if (typeof i.text !== "string" || i.text.trim().length === 0) {
+				throw new ChatInputError("ask-before-check input requires non-empty text");
+			}
+			return { type: "ask-before-check", toolCallId: i.toolCallId, text: i.text };
 		default:
 			throw new ChatInputError(`unknown input type: ${String(i.type)}`);
 	}
@@ -261,6 +278,24 @@ export function inputAppends(
 				throw new ChatInputError("next input requires no active problem");
 			}
 			return [...dismissalConclusion(record), newNextMessage()];
+		}
+		case "ask-before-check": {
+			const pending = danglingQuestionOf(record.messages);
+			if (!pending || pending.toolCallId !== input.toolCallId) {
+				throw new ChatInputError("ask-before-check targets no pending question call");
+			}
+			if (danglingQuestionCount(record.messages) !== 1) {
+				throw new ChatInputError("ask-before-check requires the only open question");
+			}
+			if (!questionAllowsAskBefore(pending.tool, phaseAt3Lh(record.messages))) {
+				throw new ChatInputError("ask-before-check is only for a teach-phase question");
+			}
+			const raw = pending.input as { question?: unknown } | null;
+			const question = typeof raw?.question === "string" ? raw.question : "";
+			return [
+				newAnswerResult(input.toolCallId, pending.tool, notYetAnswer(toolQuestionKind(pending.tool), question)),
+				newUserMessage(input.text),
+			];
 		}
 	}
 }
@@ -324,15 +359,16 @@ export function retryDrops(messages: readonly LhMessage[]): Set<string> {
 	return ids;
 }
 
-/** Walk back over failed assistants and UI-only plan blocks. A compaction
- * is a boundary, not a marker Retry may cross. A failure AFTER a compaction
+/** Walk back over failed assistants, their empty continuation attempts,
+ * and UI-only plan blocks. A compaction is a boundary Retry may not cross.
+ * A failure AFTER a compaction
  * can still retry: that compacted context was already its starting state. */
 function failedTail(messages: readonly LhMessage[]): { ids: Set<string>; before: LhMessage | undefined } {
 	const ids = new Set<string>();
 	let i = messages.length - 1;
 	for (; i >= 0; i--) {
 		const m = messages[i]!;
-		if (m.role === "assistant" && m.stopReason === "error") ids.add(m.id);
+		if (m.role === "assistant" && (m.stopReason === "error" || (ids.size > 0 && isEmptyAssistantCompletion(m)))) ids.add(m.id);
 		else if (!(m.role === "custom" && (m.customType === "plan-block" || isSideQuestionMarker(m)))) break;
 	}
 	return { ids, before: messages[i] };

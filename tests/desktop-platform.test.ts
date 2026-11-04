@@ -15,16 +15,21 @@ const mainRequire = createRequire(mainFile);
 /** Decline the single-instance lock so normal boot never spawns a server.
  * Then call the REAL createWindow with a stub Electron API and inspect its
  * constructor options. No rewritten copy of the production logic. */
-function windowOptions(platform: string, env: Record<string, string> = {}) {
+function windowOptions(platform: string, env: Record<string, string> = {}, osDark = true) {
 	class FakeWindow {
 		constructor(readonly options: unknown) {}
 		webContents = { on() {}, setWindowOpenHandler() {} };
+		listeners: Record<string, () => void> = {};
 		loadURL() {}
 		once() {}
+		on(event: string, fn: () => void) {
+			this.listeners[event] = fn;
+		}
 	}
 	const electron = {
 		app: { setName() {}, getPath: () => "/fixture/LearnHarness", setPath() {}, requestSingleInstanceLock: () => false, quit() {} },
 		BrowserWindow: FakeWindow,
+		nativeTheme: { shouldUseDarkColors: osDark, themeSource: "system", on() {} },
 		session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
 	};
 	const context = {
@@ -61,6 +66,15 @@ describe("desktop window chrome", () => {
 		});
 	}
 
+	it("the native chrome paints the rendered variant: dark by default, light under a light OS", () => {
+		const dark = windowOptions("win32");
+		assert.equal(dark.backgroundColor, "#141414");
+		const light = windowOptions("win32", {}, false);
+		assert.deepEqual(light.titleBarOverlay, { color: "#f5f5f3", symbolColor: "#1a1a1a" });
+		assert.equal(light.backgroundColor, "#f5f5f3");
+		assert.equal(windowOptions("darwin", {}, false).backgroundColor, "#f5f5f3");
+	});
+
 	it("only the external dev shell receives the web subscription transport marker", () => {
 		assert.equal(windowOptions("darwin").webPreferences.additionalArguments, undefined);
 		assert.deepEqual(windowOptions("darwin", { LH_DEV_URL: "http://localhost:3000" }).webPreferences.additionalArguments, ["--lh-web-subscriptions"]);
@@ -81,6 +95,7 @@ describe("desktop window chrome", () => {
 
 	it("preload exposes OS identity without exposing Node/Electron to the renderer", () => {
 		let bridge: Record<string, unknown> = {};
+		const sent: unknown[][] = [];
 		const context = {
 			process: { platform: "win32" },
 			require: () => ({
@@ -90,14 +105,17 @@ describe("desktop window chrome", () => {
 						bridge = api;
 					},
 				},
-				ipcRenderer: { on() {} },
+				ipcRenderer: { on() {}, send: (...args: unknown[]) => sent.push(args) },
 			}),
 		};
 		runInNewContext(readFileSync(new URL("../electron/preload.cjs", import.meta.url), "utf8"), context);
 		assert.equal(bridge.platform, "win32");
 		assert.deepEqual(Object.keys(bridge).sort(), [
-			"chatgpt", "checkForUpdates", "expandWindow", "getPathForFile", "getUpdateState", "getZoom", "installUpdate", "onOpenSettings", "onUpdateStatus", "onZoom", "platform", "subscriptions",
+			"chatgpt", "checkForUpdates", "expandWindow", "getPathForFile", "getUpdateState", "getZoom", "installUpdate", "onOpenSettings", "onUpdateStatus", "onZoom", "platform", "setAppearance", "subscriptions",
 		]);
+		const appearance = { mode: "system", background: null, lightBackground: "#eeeeee" };
+		(bridge.setAppearance as (a: unknown) => void)(appearance);
+		assert.deepEqual(sent, [["lh:appearance", appearance]]);
 		assert.deepEqual(Object.keys(bridge.subscriptions as object).sort(), ["cancel", "consent", "disconnect", "login", "onChange", "open", "respond", "retry", "status"]);
 	});
 });
@@ -308,5 +326,59 @@ describe("desktop release workflow", () => {
 			{ id: 10, tag_name: "v0.3.0", draft: true },
 			{ id: 11, tag_name: "v0.3.0", draft: true },
 		]), /Multiple releases match/);
+	});
+});
+
+describe("study time: closeAll on window close", () => {
+	function closeRequest(secret: string | null) {
+		class FakeWindow {
+			constructor(readonly options: unknown) {}
+			webContents = { on() {}, setWindowOpenHandler() {} };
+			listeners: Record<string, () => void> = {};
+			loadURL() {}
+			once() {}
+			on(event: string, fn: () => void) {
+				this.listeners[event] = fn;
+			}
+		}
+		const electron = {
+			app: { setName() {}, getPath: () => "/fixture/LearnHarness", setPath() {}, requestSingleInstanceLock: () => false, quit() {} },
+			BrowserWindow: FakeWindow,
+			nativeTheme: { shouldUseDarkColors: true, themeSource: "system", on() {} },
+			session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
+		};
+		const calls: { url: string; init: { method: string; headers: Record<string, string>; body: string } }[] = [];
+		const context = {
+			require: (id: string) => (id === "electron" ? electron : mainRequire(id)),
+			process: { platform: "darwin", argv: [], env: {}, on() {} },
+			__dirname: dirname(mainFile),
+			URL,
+			fetch: (url: URL, init: { method: string; headers: Record<string, string>; body: string }) => {
+				calls.push({ url: String(url), init });
+				return Promise.reject(new Error("offline")); // errors are ignored
+			},
+		};
+		runInNewContext(mainSource, context, { filename: mainFile });
+		if (secret) runInNewContext(`desktopAPISecret = "${secret}"`, context);
+		const win = runInNewContext('createWindow("http://127.0.0.1:9000")', context) as FakeWindow;
+		assert.equal(typeof win.listeners.close, "function", "the window registers a close listener");
+		win.listeners.close?.();
+		return calls;
+	}
+
+	it("posts closeAll to the app's own /api/study with the desktop secret", () => {
+		const secret = "a".repeat(64);
+		const [call] = closeRequest(secret);
+		assert.equal(call?.url, "http://127.0.0.1:9000/api/study");
+		assert.equal(call?.init.method, "POST");
+		assert.deepEqual(JSON.parse(call?.init.body ?? ""), { input: { type: "closeAll" } });
+		assert.equal(call?.init.headers["x-learnharness-desktop"], secret);
+		assert.equal(call?.init.headers["content-type"], "application/json");
+	});
+
+	it("sends no secret header in desktop:dev (no secret set)", () => {
+		const [call] = closeRequest(null);
+		assert.equal(call?.url, "http://127.0.0.1:9000/api/study");
+		assert.equal("x-learnharness-desktop" in (call?.init.headers ?? {}), false);
 	});
 });

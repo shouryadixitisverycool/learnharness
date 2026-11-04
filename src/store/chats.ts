@@ -13,10 +13,11 @@ import { PATHS } from "../../config.ts";
 import { emit } from "../core/events.ts";
 import type { ChatStore } from "../core/ports.ts";
 import type { AttachmentRecord, ChatRecord, ChatSettings, ChatSummary, ExtractionRunUsage, PlanTree, TurnUsage } from "../core/contracts.ts";
-import { CURRENT_CHAT_VERSION } from "../core/contracts.ts";
+import { CURRENT_CHAT_VERSION, titleFromPrompt } from "../core/contracts.ts";
 import type { LhMessage } from "../core/native-messages.ts";
 import { activeProblemOf, danglingQuestionOf } from "../core/native-messages.ts";
 import { phaseAt3Lh } from "../core/phases.ts";
+import { removeLeftoverTemps, writeFileAtomicSync } from "./atomic-write.ts";
 
 function chatFile(id: string): string {
 	if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`Invalid chat id: ${id}`);
@@ -24,7 +25,7 @@ function chatFile(id: string): string {
 }
 
 /** THE SILENCE LAW (push S6, 2026-10-02): chats-changed announces ONLY
- *  list-SHAPE mutations — createChat, renameChat, deleteChat (below,
+ *  list-SHAPE mutations — createChat, renameChat, renameChatFromPlan, deleteChat (below,
  *  each emits post-write). The content writers (saveMessages,
  *  appendTurnUsage, appendExtractionUsage, saveSettings, saveTree) are
  *  DELIBERATELY SILENT: saveMessages fires per turn-persist and would
@@ -37,6 +38,7 @@ function createChat(title: string, kind?: "practice"): ChatRecord {
 	const record: ChatRecord = {
 		id: `chat_${Date.now().toString(36)}_${crypto.randomUUID().slice(0, 8)}`,
 		title: title.trim() || "Untitled session",
+		titleSource: "prompt",
 		createdAt: now,
 		updatedAt: now,
 		messages: [],
@@ -55,7 +57,7 @@ function createChat(title: string, kind?: "practice"): ChatRecord {
  *  lazy migration means existing files only get stamped on their next write.
  *  A future-version guard lives on the read side (getChat). */
 function writeChat(record: ChatRecord): void {
-	fs.writeFileSync(chatFile(record.id), JSON.stringify({ ...record, version: CURRENT_CHAT_VERSION }, null, "\t"), "utf-8");
+	writeFileAtomicSync(chatFile(record.id), JSON.stringify({ ...record, version: CURRENT_CHAT_VERSION }, null, "\t"));
 }
 
 function getChat(id: string): ChatRecord | null {
@@ -76,45 +78,82 @@ function getChat(id: string): ChatRecord | null {
 	return parsed as ChatRecord;
 }
 
+/** Projection for the session list; null when the record is absent or fails to project. */
+function summaryOf(id: string): ChatSummary | null {
+	const record = getChat(id);
+	if (!record) return null;
+	const { messages, tree, turns, extractions, ...summary } = record;
+	// Per-record isolation (Wave B): a record whose messages fail the
+	// projection (e.g. pre-Wave-B UIMessage-format scratch — the
+	// zero-back-compat wipe makes these "corrupt") must not blank the
+	// whole sidebar — same isolation getChat's per-file catch gives.
+	try {
+		return {
+			// turns and extractions stay out of the list payload (list =
+			// summaries; usage aggregates ride the full record, the picker
+			// never needs them).
+			...summary,
+			// Normalized kind: absent record field reads as teach.
+			kind: summary.kind ?? "teach",
+			messageCount: messages.length,
+			// Record-derived status for the session picker: phase from the
+			// transcript's explicit events (probe_done concluded / verdict
+			// accepted — docs/probe-teach-split.md §4), pending question
+			// from the native dangling-call scan. Wave D: both folds read
+			// the NATIVE record (core/phases.ts phaseAt3Lh +
+			// native-messages.ts danglingQuestionOf). Liveness (busy) is
+			// NOT record-derived — the API route merges it (ChatListItem).
+			phase: phaseAt3Lh(messages),
+			pendingQuestion: danglingQuestionOf(messages) !== null,
+			// Practice: a posed problem with no conclude (the sidebar's
+			// "Problem waiting"); false on teaching sessions, which
+			// have no problem tool.
+			pendingProblem: activeProblemOf(messages) !== null,
+		};
+	} catch (err) {
+		console.error(`[chat ${summary.id}] summary projection failed:`, err);
+		return null;
+	}
+}
+
+/** Summaries keyed by file, valid while the file's stat signature holds.
+ *  Every write changes the file's mtime and ctime (ctime even when a tool
+ *  preserves mtime), and a replacement changes its inode, so in-process and
+ *  external writes both invalidate; listing costs a stat per chat, not a
+ *  full parse. Only successful projections are cached, so a transient read
+ *  failure retries next list. */
+const summaryCache = new Map<string, { signature: string; summary: ChatSummary }>();
+
 function listChats(): ChatSummary[] {
 	try {
 		fs.mkdirSync(PATHS.chats, { recursive: true });
-		return fs
-			.readdirSync(PATHS.chats)
-			.filter((f) => f.endsWith(".json"))
-			.map((f) => getChat(f.slice(0, -5)))
-			.filter((r): r is ChatRecord => r !== null)
-			.map(({ messages, tree, turns, extractions, ...summary }) => {
-				// Per-record isolation (Wave B): a record whose messages fail the
-				// projection (e.g. pre-Wave-B UIMessage-format scratch — the
-				// zero-back-compat wipe makes these "corrupt") must not blank the
-				// whole sidebar — same isolation getChat's per-file catch gives.
-				try {
-					return {
-						// turns and extractions stay out of the list payload (list =
-						// summaries; usage aggregates ride the full record, the picker
-						// never needs them).
-						...summary,
-						// Normalized kind: absent record field reads as teach.
-						kind: summary.kind ?? "teach",
-						messageCount: messages.length,
-						// Record-derived status for the session picker: phase from the
-						// transcript's explicit events (probe_done concluded / verdict
-						// accepted — docs/probe-teach-split.md §4), pending question
-						// from the native dangling-call scan. Wave D: both folds read
-						// the NATIVE record (core/phases.ts phaseAt3Lh +
-						// native-messages.ts danglingQuestionOf). Liveness (busy) is
-						// NOT record-derived — the API route merges it (ChatListItem).
-						phase: phaseAt3Lh(messages),
-						pendingQuestion: danglingQuestionOf(messages) !== null,
-					};
-				} catch (err) {
-					console.error(`[chat ${summary.id}] summary projection failed:`, err);
-					return null;
-				}
-			})
-			.filter((s): s is ChatSummary => s !== null)
-			.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+		const files = fs.readdirSync(PATHS.chats).filter((f) => f.endsWith(".json"));
+		const present = new Set(files);
+		for (const file of summaryCache.keys()) if (!present.has(file)) summaryCache.delete(file);
+		const summaries: ChatSummary[] = [];
+		for (const file of files) {
+			let signature: string;
+			try {
+				const stat = fs.statSync(path.join(PATHS.chats, file));
+				signature = `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+			} catch {
+				summaryCache.delete(file);
+				continue;
+			}
+			const cached = summaryCache.get(file);
+			if (cached?.signature === signature) {
+				summaries.push({ ...cached.summary });
+				continue;
+			}
+			const summary = summaryOf(file.slice(0, -5));
+			if (!summary) {
+				summaryCache.delete(file);
+				continue;
+			}
+			summaryCache.set(file, { signature, summary });
+			summaries.push({ ...summary });
+		}
+		return summaries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 	} catch {
 		return [];
 	}
@@ -176,9 +215,24 @@ function renameChat(id: string, title: string): ChatRecord {
 	const record = getChat(id);
 	if (!record) throw new Error(`Chat not found: ${id}`);
 	record.title = title.trim() || "Untitled session";
+	record.titleSource = "manual";
 	writeChat(record);
 	emit("chats-changed", {});
 	return record;
+}
+
+/** Only fresh prompt titles are eligible. Reading immediately before the
+ * synchronous write protects manual names, including a rename to the same text.
+ * Legacy records have no provenance and are deliberately left alone. */
+function renameChatFromPlan(id: string, title: string): void {
+	const record = getChat(id);
+	if (!record || record.kind === "practice" || record.titleSource !== "prompt") return;
+	const next = titleFromPrompt(title);
+	if (!next) return;
+	record.title = next;
+	record.titleSource = "plan";
+	writeChat(record);
+	emit("chats-changed", {});
 }
 
 /** Delete the session record file entirely (session-deletion wave 6,
@@ -188,6 +242,7 @@ function renameChat(id: string, title: string): ChatRecord {
 function deleteChat(id: string): boolean {
 	try {
 		fs.unlinkSync(chatFile(id));
+		removeLeftoverTemps(chatFile(id));
 		emit("chats-changed", {}); // only a real removal — the present-entry law
 		return true;
 	} catch {
@@ -266,6 +321,7 @@ export const chatStore: ChatStore = {
 	saveTree,
 	saveSettings,
 	renameChat,
+	renameChatFromPlan,
 	deleteChat,
 	addAttachments,
 	setAttachmentDetached,

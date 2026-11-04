@@ -234,6 +234,14 @@ export function questionNeedsReveal(tool: string, rawInput: unknown, phase: stri
 	return normalizeQuizType((rawInput as { type?: unknown } | null)?.type) !== "predict";
 }
 
+/** Ask-before is a teach-phase quiz or explain: a check still closed
+ *  behind the reveal, or a prediction (the dock open or folded). Probe
+ *  questions and ask_user_question stay gated — a user message must not
+ *  land ahead of those calls. */
+export function questionAllowsAskBefore(tool: string, phase: string): boolean {
+	return (tool === "quiz" || tool === "explain") && phase === "teach";
+}
+
 /** The teaching-cycle role field, shared VERBATIM by both teach quizzing
  *  tools (owner, 2026-10-09: explain gains the cycle's types — a
  *  free-recall check collapses behind the reveal exactly like a quiz
@@ -462,12 +470,16 @@ export interface QuestionAnswerData {
 	 *  2026-10-03) — a separate channel from `thinking`, captured by the
 	 *  reading field and riding the check answer. Absent when empty. */
 	readingThinking?: string;
-	confidence?: number; // quiz only: the learner's stated probability (0-100, raw) that his selected answer is correct — never sent on "I don't know" (owner, 2026-10-01)
+	confidence?: number; // quiz and explain: the learner's stated probability (0-100, raw) that his answer is correct — never sent on "I don't know" (owner, 2026-10-01)
 	correct?: boolean; // quiz only
 	correctIndices?: number[]; // quiz only (rendering)
 	committed?: string; // explain only (rendering): the model's committed answer
 	explanation?: string; // quiz only (rendering)
 	dismissed?: boolean;
+	/** The learner asked about the teaching before taking this question
+	 *  (ask-before-check): a closed check or a prediction. Not a skip, not
+	 *  a grade. The same question is posed again after the teacher answers. */
+	notYet?: boolean;
 	answeredAt: string;
 }
 
@@ -489,7 +501,7 @@ export interface AnswerRequest {
 	text?: string; // ask text-mode
 	thinking?: string; // the reasoning-on-the-question channel (was `note`)
 	readingThinking?: string; // the thinking-while-reading channel (check answers)
-	confidence?: number; // quiz only: 0-100 raw probability — 50 is a real coin flip, always sent (owner, 2026-10-01)
+	confidence?: number; // quiz and explain: 0-100 raw probability — 50 is a real coin flip, always sent (owner, 2026-10-01)
 }
 
 /** The confidence slider's snap stops (owner, 2026-10-01): raw probability
@@ -735,12 +747,14 @@ export function buildAnswer(qd: QuestionData, req: AnswerRequest, tool?: string)
 		base.correctIndices = qd.correctIndices ?? [];
 		base.explanation = qd.explanation;
 		base.correct = base.dontKnow ? false : isCorrect(base.answers.map((a) => a.index), qd.correctIndices ?? []);
-		// The confidence slider rides on real quiz answers only — never on
-		// "I don't know" (no answer, no probability). Clamped defensively;
-		// the dock snaps to the grid, the record accepts any integer.
-		if (!base.dontKnow && req.confidence !== undefined) {
-			base.confidence = Math.max(0, Math.min(100, Math.round(req.confidence)));
-		}
+	}
+	// The confidence slider rides on real quiz AND explain answers (the
+	// learner's probability that his pick or his written answer is correct)
+	// — never on "I don't know" (no answer, no probability), never on ask.
+	// Clamped defensively; the dock snaps to the grid, the record accepts any
+	// integer.
+	if ((qd.kind === "quiz" || qd.kind === "explain") && !base.dontKnow && req.confidence !== undefined) {
+		base.confidence = Math.max(0, Math.min(100, Math.round(req.confidence)));
 	}
 	if (qd.kind === "explain") {
 		// No client grading — the model grades in its reply, against the
@@ -776,7 +790,23 @@ export function dismissedAnswer(kind: QuestionKind, questionText: string): Quest
 	};
 }
 
+/** The ask-before-check record: a closed check or a prediction was waiting
+ *  and he asked about the teaching instead of taking it. The model sees
+ *  {kind, notYet:true}; the transcript shows his message, not a skipped
+ *  card. The teacher answers, then poses the same question again. */
+export function notYetAnswer(kind: QuestionKind, questionText: string): QuestionAnswerData {
+	return {
+		kind,
+		questionText,
+		dontKnow: false,
+		answers: [],
+		notYet: true,
+		answeredAt: new Date().toISOString(),
+	};
+}
+
 export function compactAnswerForModel(ad: QuestionAnswerData): Record<string, unknown> {
+	if (ad.notYet) return { kind: ad.kind, notYet: true };
 	if (ad.dismissed) return { kind: ad.kind, dismissed: true };
 	const out: Record<string, unknown> = { kind: ad.kind };
 	if (ad.dontKnow) out.dontKnow = true;

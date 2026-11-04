@@ -475,7 +475,7 @@ export function modelSolutionForConclude(
 export function problemInputForConclude(
 	messages: readonly LhMessage[],
 	concludeCallId: string,
-): { statement?: unknown; mode?: unknown; target?: unknown; modelSolution?: unknown } | undefined {
+): { statement?: unknown; mode?: unknown; target?: unknown; modelSolution?: unknown; reference?: unknown } | undefined {
 	let mi = messages.findIndex(
 		(m) =>
 			(m as { role?: string }).role === "assistant" &&
@@ -494,7 +494,7 @@ export function problemInputForConclude(
 			if (block.type !== "toolCall" || block.name !== PRACTICE_PROBLEM_TOOL) continue;
 			if (!clean.has(block.id)) continue; // a refused pose revealed nothing
 			return (block.arguments ?? undefined) as
-				| { statement?: unknown; mode?: unknown; target?: unknown; modelSolution?: unknown }
+				| { statement?: unknown; mode?: unknown; target?: unknown; modelSolution?: unknown; reference?: unknown }
 				| undefined;
 		}
 	}
@@ -794,6 +794,14 @@ export function questionCallsOf(messages: readonly LhMessage[]): QuestionCall[] 
 	return [];
 }
 
+/** Unresolved question calls on the newest assistant message, in any
+ *  status (answerable, malformed, streaming, failed). Zero when that
+ *  message has none, matching questionCallsOf. ask-before-check requires
+ *  exactly one, so a user message never lands ahead of a sibling's result. */
+export function danglingQuestionCount(messages: readonly LhMessage[]): number {
+	return questionCallsOf(messages).length;
+}
+
 /** Background wakes must still wait for an explicit learner action when a
  * question is unusable. Releasing the composer is not permission to retry. */
 export function hasUnresolvedQuestion(messages: readonly LhMessage[]): boolean {
@@ -944,6 +952,13 @@ export function reconstructRequestCause(messages: readonly LhMessage[]): Reconst
 		history.push(message);
 	}
 	return resolve();
+}
+
+/** A completed generation with no prose or tool call has not responded to
+ * the learner. Thinking (including encrypted reasoning) alone is not output. */
+export function isEmptyAssistantCompletion(message: AgentMessage): boolean {
+	return message.role === "assistant" && message.stopReason === "stop" &&
+		message.content.every((block) => block.type === "thinking" || (block.type === "text" && !block.text.trim()));
 }
 
 export function needsContinuation(record: readonly LhMessage[]): boolean {

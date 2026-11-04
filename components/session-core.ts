@@ -16,6 +16,7 @@
 import type { AgentEvent } from "@earendil-works/pi-agent-core";
 import type { ToolResultMessage } from "@earendil-works/pi-ai";
 import {
+	danglingQuestionOf,
 	needsContinuation,
 	pendingQuestionOf,
 	failedResponseAtEnd,
@@ -25,7 +26,9 @@ import {
 	newProblemDismissedMarker,
 	newThinkingMessage,
 	newUserMessage,
+	notYetAnswer,
 	projectView,
+	toolQuestionKind,
 	type ChatInput,
 	type LhMarkerMessage,
 	type LhMessage,
@@ -708,6 +711,16 @@ export class SessionModel {
 			const result = { ...newAnswerResult(input.toolCallId, tool, input.answer), id: localId() };
 			optimistic.push(result);
 			this.unconfirmedAnswers.set(result.id, expectedKey ?? input.toolCallId);
+		} else if (input.type === "ask-before-check") {
+			const native = [...this.base, ...this.tail];
+			const pending = danglingQuestionOf(native);
+			const tool = pendingCallTool(native, input.toolCallId) ?? pending?.tool ?? "quiz";
+			const raw = pending?.toolCallId === input.toolCallId ? (pending.input as { question?: unknown } | null) : null;
+			const question = typeof raw?.question === "string" ? raw.question : "";
+			optimistic.push(
+				{ ...newAnswerResult(input.toolCallId, tool, notYetAnswer(toolQuestionKind(tool), question)), id: localId() },
+				{ ...newUserMessage(input.text), id: localId() },
+			);
 		}
 		if (optimistic.length > 0) this.mutate(() => {
 			this.tail = [...this.tail, ...optimistic];
@@ -935,9 +948,9 @@ export class SessionModel {
 	/**
 	 * Append-only adoption (the mid-turn steer/artifact ground rule): swap
 	 * in the record — every current base message must still be present
-	 * (the server appends only) — keeping the live tail, minus the
-	 * optimistic entries the record has absorbed (their server-stamped
-	 * copies just landed; without this the input bubble would double).
+	 * (the server appends only) — keeping the live tail, minus entries the
+	 * record already carries by id and optimistic entries it has absorbed
+	 * (their server-stamped copies just landed; without this messages double).
 	 */
 	adoptRecord(record: LhMessage[]): void {
 		const recordIds = new Set(record.map((m) => (m as { id?: string }).id));
@@ -946,7 +959,7 @@ export class SessionModel {
 		this.mutate(() => {
 			this.base = record;
 			this.forgetResolvedDrafts(record);
-			this.tail = this.tail.filter((m) => !absorbed(m, record));
+			this.tail = this.tail.filter((m) => !(typeof m.id === "string" && recordIds.has(m.id)) && !absorbed(m, record));
 		});
 	}
 

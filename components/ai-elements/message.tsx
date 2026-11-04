@@ -34,7 +34,7 @@ import {
   type PluginConfig,
 } from "streamdown";
 import { mdComponents } from "@/components/md-blocks";
-import { repairMathForDisplay, transformMathDelimiters } from "@/src/core";
+import { healOverescapedCommands, repairMathForDisplay, transformMathDelimiters } from "@/src/core";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
   from: LhViewMessage["role"];
@@ -355,6 +355,13 @@ export const streamdownPlugins = {
   math: createMathPlugin({ singleDollarTextMath: true }),
 } as unknown as PluginConfig;
 
+// KaTeX's hidden MathML otherwise lands in copied text; copy-tex copies each
+// formula as its $...$ source instead. Browser-only: it binds to document.
+if (typeof document !== "undefined") {
+  // @ts-expect-error -- copy-tex ships no type declarations
+  void import("katex/contrib/copy-tex");
+}
+
 // Remend's incomplete-HTML heuristic mistakes `<b` in `$a<b$` for a
 // partial tag and deletes the remaining source before math can tokenize.
 // Preserve that text (unfinished prose HTML may show literally); Streamdown's
@@ -395,8 +402,20 @@ export const MessageResponse = memo(
 
 MessageResponse.displayName = "MessageResponse";
 
+/** Assistant prose carries no JSON layer, so only doubled command
+ * backslashes need healing there: GPT-5.x writes `\\frac` in plain replies
+ * (#111), which KaTeX renders as a row break plus a bare "frac". The
+ * heal is parse-guarded and display-only; the saved text stays as written. */
+export function AssistantTextResponse({ children, ...props }: MessageResponseProps) {
+  return (
+    <MessageResponse {...props}>
+      {typeof children === "string" ? healOverescapedCommands(children) : children}
+    </MessageResponse>
+  );
+}
+
 /** Recovery is a tool-text presentation concern, not a shape/answer-data
- * transform. Ordinary assistant/user prose keeps MessageResponse unchanged. */
+ * transform. User prose keeps MessageResponse unchanged. */
 export function ToolContentResponse({ children, ...props }: MessageResponseProps) {
   return (
     <MessageResponse {...props}>
