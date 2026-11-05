@@ -99,7 +99,9 @@ describe("runSideQuestion", () => {
 			["find", { pattern: "*.json", path: PATHS.data }],
 			["read", { path: AUTH_FILE }],
 		] as const) {
-			await assert.rejects(() => run(name, args), /app's own data/, `${name} ${JSON.stringify(args)}`);
+			// The shared sensitive-path guard (upstream #421 review) refuses the
+			// auth file before the side agent's own check does; either refusal holds.
+			await assert.rejects(() => run(name, args), /app's own data|is a protected location/, `${name} ${JSON.stringify(args)}`);
 		}
 		await assert.doesNotReject(() => run("ls", { path: "/definitely/missing/dir" }).catch((err: Error) => {
 			if (/app's own data/.test(err.message)) throw err;

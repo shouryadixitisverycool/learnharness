@@ -16,7 +16,8 @@ import {
 } from "./tools.ts";
 import { practiceTools, type PracticeToolContext } from "./tools/practice.ts";
 import { healToolRecord, withArgumentHeal } from "./tools/heal.ts";
-import { needsSendToUser, sendToUserTool } from "./tools/send-to-user.ts";
+import { sendToUserApplies, sendToUserTool } from "./tools/send-to-user.ts";
+import { makeNarrationGuard, narrationGuardApplies, SEND_TO_USER_DELIVERY_RULE } from "./narration-guard.ts";
 import {
 	attachmentImageParts,
 	attachmentsPromptSection,
@@ -31,11 +32,11 @@ import type { ChatGPTRequestCycle } from "./chatgpt-request-cycle.ts";
 import { usageWasAdmitted } from "./subscription-request-cycle.ts";
 
 /**
- * The two teaching-side agents (docs/probe-teach-split.md): the PROBER and
+ * The two teaching-side agents (docs/archive/probe-teach-split.md): the PROBER and
  * the TEACHER. Same transcript, different prompts and tool sets; the
  * chat-handler constructs ONE per request off the transcript's seam
  * (probe_done = teacher) — the STATELESS per-turn engine (docs/
- * pi-engine-swap.md §2): the persisted record is the source of truth, the
+ * docs/archive/pi-engine-swap.md §2): the persisted record is the source of truth, the
  * agent is rebuilt from it every POST and discarded at turn end.
  *
  * Engines are injectable so tests can pass a scripted faux engine and drive
@@ -103,8 +104,12 @@ const composedInstructions: Record<AgentKind, string> = {
 export function systemPromptFor(
 	kind: AgentKind,
 	opts: { promptSwitches?: Record<string, boolean>; attachments?: readonly SessionAttachment[] } = {},
+	narrationGuard = false,
 ): string {
-	const instructions = opts.promptSwitches ? composeInstructions(kind, opts.promptSwitches) : composedInstructions[kind]!;
+	const composed = opts.promptSwitches ? composeInstructions(kind, opts.promptSwitches) : composedInstructions[kind]!;
+	// The delivery rule is fixed per model, so it joins the cacheable prefix;
+	// the per-session attachment list stays last.
+	const instructions = narrationGuard ? `${composed}\n\n---\n\n${SEND_TO_USER_DELIVERY_RULE}` : composed;
 	const section = attachmentsPromptSection(opts.attachments ?? []);
 	return section ? `${instructions}\n\n---\n\n${section}` : instructions;
 }
@@ -155,7 +160,7 @@ export interface AgentBuildOptions {
 }
 
 /**
- * The turn's question-stop rule (docs/pi-engine-swap.md §2; Wave A
+ * The turn's question-stop rule (docs/archive/pi-engine-swap.md §2; Wave A
  * 2026-09-26, owner Option A): a question tool call (quiz /
  * ask_user_question) that RESOLVED — its synthetic "question posed" result
  * is not an error — ends the run: the learner's answer arrives as the next
@@ -205,7 +210,8 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 	// ("practice" is not a ModelRole) honest about that.
 	const engine = opts.engine ?? piEngineFor(kind as "prober" | "teacher");
 	const stopper = makeQuestionStopper(kind);
-	const systemPrompt = systemPromptFor(kind, opts);
+	const narrationGuard = narrationGuardApplies(kind, engine.model, opts.tools !== undefined);
+	const systemPrompt = systemPromptFor(kind, opts, narrationGuard);
 	const sessionTools = opts.tools === undefined ? Object.values(healToolRecord(attachmentTools(opts.attachments ?? []))) : [];
 	const attachedImages = engine.model.input?.includes("image")
 		? attachmentImageParts(opts.attachments ?? [], engine.model)
@@ -236,7 +242,7 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 					? { ...tool, execute: createReadTool(engine.model).execute as AgentTool<any>["execute"] }
 					: tool),
 				...sessionTools,
-				...(opts.tools === undefined && needsSendToUser(engine.model)
+				...(sendToUserApplies(kind, engine.model, opts.tools !== undefined)
 					? [withArgumentHeal(sendToUserTool)]
 					: []),
 			],
@@ -244,6 +250,9 @@ function baseAgentOptions(kind: AgentKind, opts: AgentBuildOptions, tools: Agent
 		},
 		streamFn: engine.streamFn,
 		...(providerEvents ? { onProviderStreamEvent: providerEvents } : {}),
+		// Narration-marked thinking is not learner-facing delivery. The
+		// paired hooks track successful output before allowing its question.
+		...(narrationGuard ? makeNarrationGuard() : {}),
 		// 0.87.1: shouldStopAfterTurn → finishTurn. Same call point (after
 		// tool results attach, before turn_end) and `{ action: "end" }` still
 		// exits BEFORE the steering poll — the parked-marker stranding our
@@ -397,7 +406,8 @@ export function bareQuestionTools(): Record<string, AgentTool<any>> {
  * problem + conclude (tools/practice.ts); the doctrine prompt
  * (prompts/practice/) carries the method. A successful problem pose ends
  * the run, natively for a problem-only batch and via the shared stop hook
- * for a mixed batch (for example, send_to_user + problem).
+ * for a mixed batch (including caller-injected legacy output tools).
+ * Practice uses ordinary final prose, not the explicit output tool.
  */
 export function createPracticeAgent(ctx: PracticeToolContext, opts: AgentBuildOptions = {}) {
 	const tools = opts.tools ?? practiceTools(ctx);
