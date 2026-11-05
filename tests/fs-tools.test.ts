@@ -1,5 +1,6 @@
 import assert from "node:assert";
 import * as fs from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { describe, it } from "node:test";
@@ -87,39 +88,80 @@ describe("glob helpers (fs-shared)", () => {
 });
 
 describe("resolveSourcePath (fs-shared)", () => {
-	it("a leading ~ is the learner's home, as a shell expands it", () => {
-		const home = os.homedir();
+	it("expands a leading ~ and returns the canonical learner-home path", () => {
+		const home = realpathSync.native(os.homedir());
 		assert.equal(resolveSourcePath("~"), home);
 		assert.equal(resolveSourcePath("~/notes/calculus.md"), path.join(home, "notes", "calculus.md"));
 		assert.equal(resolveSourcePath(`~${path.sep}notes${path.sep}calculus.md`), path.join(home, "notes", "calculus.md"));
 	});
 
-	it("preserves default, ordinary relative, and absolute paths", () => {
-		const home = os.homedir();
+	it("returns canonical default, ordinary relative, and absolute paths", () => {
+		const home = realpathSync.native(os.homedir());
 		const absolute = path.join(os.tmpdir(), "course", "notes.md");
 		assert.equal(resolveSourcePath(), home);
 		assert.equal(resolveSourcePath(""), home);
 		assert.equal(resolveSourcePath("notes/calculus.md"), path.join(home, "notes", "calculus.md"));
-		assert.equal(resolveSourcePath(absolute), absolute);
+		assert.equal(resolveSourcePath(absolute), path.join(realpathSync.native(os.tmpdir()), "course", "notes.md"));
 	});
 
 	it("backslash is a home separator only on Windows", () => {
+		const home = realpathSync.native(os.homedir());
 		const input = "~\\notes\\calculus.md";
 		const expected = process.platform === "win32"
-			? path.join(os.homedir(), "notes", "calculus.md")
-			: path.join(os.homedir(), input);
+			? path.join(home, "notes", "calculus.md")
+			: path.join(home, input);
 		assert.equal(resolveSourcePath(input), expected);
 	});
 
 	it("~user and non-leading tildes stay literal", () => {
-		const home = os.homedir();
+		const home = realpathSync.native(os.homedir());
 		assert.equal(resolveSourcePath("~other/notes.md"), path.join(home, "~other", "notes.md"));
 		assert.equal(resolveSourcePath("notes/~draft.md"), path.join(home, "notes", "~draft.md"));
-		assert.equal(resolveSourcePath("/tmp/~/x.md"), "/tmp/~/x.md");
+		assert.equal(resolveSourcePath(path.join(os.tmpdir(), "~", "x.md")), path.join(realpathSync.native(os.tmpdir()), "~", "x.md"));
 	});
 });
 
 describe("learner tools share leading-tilde resolution", () => {
+	it("canonicalizes an explicitly aliased synthetic HOME without changing path semantics", async () => {
+		const home = await setup();
+		const alias = `${home}-alias`;
+		const realHome = await fs.realpath(home);
+		await fs.symlink(home, alias, process.platform === "win32" ? "junction" : "dir");
+		const originalHome = process.env.HOME;
+		const originalUserProfile = process.env.USERPROFILE;
+		try {
+			process.env.HOME = process.env.USERPROFILE = alias;
+			assert.equal(os.homedir(), alias, "the caller retains the non-canonical HOME");
+			assert.notEqual(alias, realHome);
+			for (const input of [undefined, "", "~"]) assert.equal(resolveSourcePath(input), realHome);
+			for (const input of ["notes/calculus.md", "~/notes/calculus.md", `~${path.sep}notes${path.sep}calculus.md`]) {
+				assert.equal(resolveSourcePath(input), path.join(realHome, "notes", "calculus.md"));
+			}
+			assert.equal(resolveSourcePath("~other/notes.md"), path.join(realHome, "~other", "notes.md"));
+			assert.equal(resolveSourcePath("notes/~draft.md"), path.join(realHome, "notes", "~draft.md"));
+			const backslash = "~\\notes\\calculus.md";
+			assert.equal(resolveSourcePath(backslash), process.platform === "win32"
+				? path.join(realHome, "notes", "calculus.md") : path.join(realHome, backslash));
+			assert.match(await runText(readTool, { path: "~/notes/calculus.md" }), /The derivative measures force/);
+			const seen: string[] = [];
+			await walkFiles(alias, (file) => {
+				assert.ok(file.startsWith(realHome + path.sep), "walk emits canonical file paths");
+				seen.push(path.relative(realHome, file).split(path.sep).join("/"));
+				return false;
+			});
+			assert.ok(seen.includes("notes/calculus.md"));
+			assert.ok(!seen.some((file) => file.startsWith("node_modules/") || file.startsWith("Library/")));
+			assert.equal(os.homedir(), alias, "tool execution does not rewrite caller configuration");
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+			else process.env.USERPROFILE = originalUserProfile;
+			await fs.unlink(alias);
+			await fs.rm(home, { recursive: true, force: true });
+		}
+	});
+
 	it("read, ls, find, and grep reach the same synthetic home", async () => {
 		const home = await setup();
 		const originalHome = process.env.HOME;
@@ -157,7 +199,7 @@ describe("sensitive locations under home are off-limits", () => {
 		await fs.mkdir(path.join(home, ".ssh"), { recursive: true });
 		await fs.writeFile(path.join(home, ".ssh", "id_ed25519"), "eigenvector PRIVATE KEY\n");
 		await fs.writeFile(path.join(home, "code", ".env.local"), "EIGENVECTOR_API_KEY=sk-secret-token\n");
-		await fs.symlink(path.join(home, ".ssh"), path.join(home, "notes", "keys"));
+		await fs.symlink(path.join(home, ".ssh"), path.join(home, "notes", "keys"), process.platform === "win32" ? "junction" : "dir");
 		await fs.mkdir(path.join(home, ".claudette"), { recursive: true });
 		await fs.writeFile(path.join(home, ".claudette", "ok.md"), "eigenvector lookalike\n");
 		const originalHome = process.env.HOME;
@@ -194,9 +236,10 @@ describe("sensitive locations under home are off-limits", () => {
 
 	it("walkFiles never enters them", async () => {
 		await withSensitiveHome(async (home) => {
+			const realHome = await fs.realpath(home);
 			const seen: string[] = [];
 			await walkFiles(home, (f) => {
-				seen.push(path.relative(home, f).split(path.sep).join("/"));
+				seen.push(path.relative(realHome, f).split(path.sep).join("/"));
 				return false;
 			});
 			assert.ok(seen.includes("notes/calculus.md"));
@@ -219,7 +262,7 @@ describe("sensitive locations under home are off-limits", () => {
 
 	it("explicit paths are refused by read, ls, find, and grep — symlinks included", async () => {
 		await withSensitiveHome(async (home) => {
-			const denied = /Access denied: .* is a sensitive location/;
+			const denied = /Access denied: .* is a protected location/;
 			await assert.rejects(readTool.execute!("c", { path: "~/.ssh/id_ed25519" }), denied);
 			await assert.rejects(readTool.execute!("c", { path: path.join(home, "code", ".env.local") }), denied);
 			await assert.rejects(readTool.execute!("c", { path: "~/notes/keys/id_ed25519" }), denied);

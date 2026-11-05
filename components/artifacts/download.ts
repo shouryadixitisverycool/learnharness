@@ -19,12 +19,14 @@ export function slugFilename(title: string): string {
 	return slug || "demo";
 }
 
-/** Save text as a downloaded file. The blob URL is revoked right after the
- *  click — Chromium keeps the download alive past the revoke. */
-export function downloadFile(name: string, text: string, mime: string): void {
+/** Save text (or bytes) as a downloaded file. The blob URL is revoked right
+ *  after the click — Chromium keeps the download alive past the revoke.
+ *  The Android shell's save bridge carries text only, so bytes take the
+ *  blob path there too. */
+export function downloadFile(name: string, content: string | Uint8Array<ArrayBuffer>, mime: string): void {
 	const androidSave = (window as Window & { lhAndroidSaveText?: (name: string, text: string, mime: string) => void }).lhAndroidSaveText;
-	if (androidSave) { androidSave(name, text, mime); return; }
-	const blob = new Blob([text], { type: mime });
+	if (androidSave && typeof content === "string") { androidSave(name, content, mime); return; }
+	const blob = new Blob([content], { type: mime });
 	const url = URL.createObjectURL(blob);
 	const a = document.createElement("a");
 	a.href = url;
