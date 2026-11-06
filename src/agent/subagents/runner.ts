@@ -202,7 +202,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 			jobStore.updateJob(jobId, { status: "error", error: `unknown kind ${job.kind}`, activity: "failed" });
 			return;
 		}
-		const engine = pickEngine(job.kind);
+		// A slot can still name a model whose provider or catalog entry is gone
+		// (the engine build throws). That refuses like a missing engine below
+		// instead of rejecting here and leaving the job running forever.
+		let engine: PiEngine | undefined;
+		let buildError: unknown;
+		try { engine = pickEngine(job.kind); } catch (err) { buildError = err; }
 		// The per-need refusal guards (BYOK 2026-09-22 / provider-key
 		// interlude 2026-09-25): no engine for the kind's tier, or the
 		// resolved engine's provider key gone — both refuse through the SAME
@@ -241,6 +246,11 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 								};
 			await finishJob(jobId, failure);
 		};
+		if (buildError !== undefined) {
+			console.info(`[job ${jobId}] refused — ${buildError instanceof Error ? buildError.message : String(buildError)}`);
+			await refuse("The selected model is unavailable.");
+			return;
+		}
 		if (!engine) {
 			const tier = ROLE_SLOT[KIND_ROLE[job.kind]];
 			const envelope = modelsNotConfigured([tier]);
