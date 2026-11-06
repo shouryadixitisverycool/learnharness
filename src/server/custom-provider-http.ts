@@ -47,7 +47,7 @@ export function customProviderGet(request: Request): Response {
 	});
 }
 
-function authorized(request: Request): boolean {
+export function authorized(request: Request): boolean {
 	const desktop = process.env.LH_DESKTOP_SERVER === "1" || Boolean(process.env.LH_DESKTOP_API_SECRET);
 	if (desktop) return desktopAPIAuthorized(request.headers);
 	const origin = request.headers.get("origin");

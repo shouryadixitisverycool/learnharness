@@ -26,6 +26,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
 	AUTH_KEYS,
+	BEDROCK_PROVIDER,
 	CUSTOM_MODEL_DEFAULT_CONTEXT_WINDOW,
 	CUSTOM_MODEL_DEFAULT_MAX_TOKENS,
 	CUSTOM_PROVIDER,
@@ -39,6 +40,7 @@ import { SubscriptionConnections } from "./subscription-connections.tsx";
 import { ClaudeCodeInstallationStatus } from "./claude-code-status.tsx";
 import { CursorInstallationStatus } from "./cursor-status.tsx";
 import { ProviderMenuList } from "./model-menu.tsx";
+import { BedrockEditor, BedrockRow, readBedrockStatus, type BedrockStatus } from "./bedrock-provider.tsx";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { DictationLanguageSetting } from "@/components/dictation-language";
@@ -90,6 +92,13 @@ export const CUSTOM_PROVIDER_INFO: ProviderKeyInfo = {
 	label: CUSTOM_PROVIDER.label,
 };
 
+/** Amazon Bedrock's synthetic Add-provider entry (offered only while unconfigured). */
+export const BEDROCK_PROVIDER_INFO: ProviderKeyInfo = {
+	id: BEDROCK_PROVIDER.id,
+	envVar: BEDROCK_PROVIDER.envVar,
+	label: BEDROCK_PROVIDER.label,
+};
+
 /** The classification driving the table groups. Pure — exported for
  *  tests. OpenRouter is un-pinned (wave-5 owner ruling): no synthesis,
  *  no special row — it rides the same provider classification. */
@@ -126,6 +135,8 @@ export function classifyKeys(
 		// section), so it never shows here — not as a provider row, not as an
 		// "other stored variable".
 		if (s.id === CUSTOM_PROVIDER.envVar) continue;
+		// Same for the Bedrock key: its home is the Amazon Bedrock row.
+		if (s.id === BEDROCK_PROVIDER.envVar) continue;
 		if (providerEnv.has(s.id) || (!s.info && providers === undefined)) providerRows.push(s);
 		else if (!s.info) unknownRows.push(s);
 		// (pre-interlude catalogs: a curated-but-unclassified status still
@@ -388,13 +399,16 @@ export function KeysSection({
 	/** The custom endpoint's status + whether its connect editor is open. */
 	const [custom, setCustom] = useState<CustomStatus | null>(null);
 	const [addingCustom, setAddingCustom] = useState(false);
+	/** Amazon Bedrock's status + whether its editor is open. */
+	const [bedrock, setBedrock] = useState<BedrockStatus | null>(null);
+	const [editingBedrock, setEditingBedrock] = useState(false);
 
 	// Escape folds any open editor (unfolded row or the Add-provider paste)
 	// WITHOUT closing the dialog. Claimed at document CAPTURE phase — the
 	// only stopPropagation that outruns both the input's React handler and
 	// the dialog's window-level listener.
 	useEffect(() => {
-		if (openRow === null && adding === null && !addingCustom) return;
+		if (openRow === null && adding === null && !addingCustom && !editingBedrock) return;
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key !== "Escape") return;
 			// A language dropdown above this editor in the dismissal stack owns
@@ -405,10 +419,11 @@ export function KeysSection({
 			setOpenRow(null);
 			setAdding(null);
 			setAddingCustom(false);
+			setEditingBedrock(false);
 		};
 		document.addEventListener("keydown", onKeyDown, true);
 		return () => document.removeEventListener("keydown", onKeyDown, true);
-	}, [openRow, adding, addingCustom]);
+	}, [openRow, adding, addingCustom, editingBedrock]);
 
 	const reload = async () => {
 		try {
@@ -426,6 +441,11 @@ export function KeysSection({
 			setCustom(await readCustomStatus());
 		} catch {
 			/* custom status unavailable — leave it unset */
+		}
+		try {
+			setBedrock(await readBedrockStatus());
+		} catch {
+			/* Bedrock status unavailable — leave it unset */
 		}
 	};
 
@@ -543,18 +563,32 @@ export function KeysSection({
 						onCancel={() => setAddingCustom(false)}
 					/>
 				)}
+				{bedrock?.region && (
+					<BedrockRow status={bedrock} expanded={editingBedrock} onToggle={() => setEditingBedrock((v) => !v)} />
+				)}
+				{editingBedrock && (
+					<BedrockEditor
+						key={`${bedrock?.region ?? ""}:${bedrock?.models.length ?? 0}`}
+						status={bedrock}
+						onSaved={async () => {
+							setEditingBedrock(false);
+							await reload();
+							notifySettingsSaved("keys");
+						}}
+						onCancel={() => setEditingBedrock(false)}
+					/>
+				)}
 				{providers !== undefined && (
 					<AddProviderRow
-						addable={custom?.baseUrl ? addable : [...addable, CUSTOM_PROVIDER_INFO]}
+						addable={[...addable, ...(custom?.baseUrl ? [] : [CUSTOM_PROVIDER_INFO]), ...(bedrock?.region ? [] : [BEDROCK_PROVIDER_INFO])]}
 						onPick={(p) => {
 							setAddError(null);
-							if (p.id === CUSTOM_PROVIDER.id) {
-								setAdding(null);
-								setAddingCustom(true);
-							} else {
-								setAddingCustom(false);
-								setAdding(p);
-							}
+							setAdding(null);
+							setAddingCustom(false);
+							setEditingBedrock(false);
+							if (p.id === CUSTOM_PROVIDER.id) setAddingCustom(true);
+							else if (p.id === BEDROCK_PROVIDER.id) setEditingBedrock(true);
+							else setAdding(p);
 						}}
 					/>
 				)}

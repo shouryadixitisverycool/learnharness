@@ -4,7 +4,8 @@
  */
 import { calculateCost, type Usage } from "@earendil-works/pi-ai";
 import { piModels } from "../agent/models.ts";
-import { CUSTOM_PROVIDER } from "../core/auth-keys.ts";
+import { BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
+import { bedrockPriceUnknown } from "./bedrock-provider.ts";
 import { isCliProvider } from "../core/contracts/cursor.ts";
 import type { CallUsage, ChatRecord, JobRecord, TurnUsage } from "../core/contracts.ts";
 import { isSubscriptionModel, sessionCost as foldSessionCost, turnCost as foldTurnCost, jobCost as foldJobCost } from "../core/prices.ts";
@@ -14,7 +15,11 @@ function catalogModel(id: string) {
 	// Native CLI routing determines billing. Adapter zero-rate placeholders
 	// must never become an apparent $0 estimate or subscription classification.
 	if (colon < 0 || isSubscriptionModel(id) || isCliProvider(id.slice(0, colon)) || id.slice(0, colon) === CUSTOM_PROVIDER.id) return undefined;
-	return piModels().getModel(id.slice(0, colon), id.slice(colon + 1));
+	// Resolve first: the sync that registers Bedrock also records which of
+	// its models have no price data (never shown as $0).
+	const model = piModels().getModel(id.slice(0, colon), id.slice(colon + 1));
+	if (id.slice(0, colon) === BEDROCK_PROVIDER.id && bedrockPriceUnknown(id.slice(colon + 1))) return undefined;
+	return model;
 }
 
 export function callCost(call: Partial<CallUsage>, modelId: string): number | null {

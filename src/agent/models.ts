@@ -7,6 +7,7 @@ import {
 	type Model,
 	type Models,
 	type MutableModels,
+	type Provider,
 	type StreamFunction,
 } from "@earendil-works/pi-ai";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
@@ -58,20 +59,44 @@ export type { ThinkingLevel };
 let collection: ReturnType<typeof createModels> | undefined;
 interface ProviderSource {
 	sync(models: MutableModels): void;
+	/** Provider ids this source registers as custom OpenAI-compatible routes
+	 *  (per-operation revalidation, owner-authorized images). */
 	isCustom(id: string): boolean;
 }
-let providerSource: ProviderSource | undefined;
+/** Named so each server-side source (custom endpoint, Amazon Bedrock) can be
+ *  replaced on module re-evaluation without touching the others. */
+const providerSources = new Map<string, ProviderSource>();
 
 /** Configuration IO is injected by the server; the agent never imports stores. */
-export function configureProviderSource(source: ProviderSource): void {
+export function configureProviderSource(source: ProviderSource, name = "custom"): void {
 	// Server module re-evaluation can replace the source while this collection
 	// survives. Retire only the previous source's routes, not built-ins.
-	if (collection && providerSource) {
+	const previous = providerSources.get(name);
+	if (collection && previous) {
 		for (const provider of collection.getProviders()) {
-			if (providerSource.isCustom(provider.id)) collection.deleteProvider(provider.id);
+			if (previous.isCustom(provider.id)) collection.deleteProvider(provider.id);
 		}
 	}
-	providerSource = source;
+	providerSources.set(name, source);
+}
+
+function isCustomRoute(id: string): boolean {
+	for (const source of providerSources.values()) if (source.isCustom(id)) return true;
+	return false;
+}
+
+/** The native Bedrock Converse streams, loaded lazily through an import
+ *  standalone tracing can see (Pi's default Node-only loader hides it). */
+export function bedrockNativeStreams() {
+	return lazyApi(() => import("@earendil-works/pi-ai/api/bedrock-converse-stream"));
+}
+
+let nativeBedrock: Provider<Api> | undefined;
+/** pi-ai's own amazon-bedrock entry (static catalog, AWS credential chain),
+ *  restored whenever the user's Bedrock configuration is absent. Set when
+ *  the collection is built, before any source syncs. */
+export function nativeBedrockProvider(): Provider<Api> | undefined {
+	return nativeBedrock;
 }
 
 /** The process-wide pi-ai Models collection — EVERY builtin provider's
@@ -89,14 +114,13 @@ export function piModels() {
 			// Keep the native Bedrock implementation reachable by standalone tracing.
 			// Pi's default Node-only loader hides this import from bundlers. Only
 			// replace its lazy forwarding; preserve the native factory's auth/catalog.
-			collection.setProvider(provider.id === "amazon-bedrock"
-				? { ...provider, ...lazyApi(() => import("@earendil-works/pi-ai/api/bedrock-converse-stream")) }
-				: provider);
+			if (provider.id === "amazon-bedrock") nativeBedrock = { ...provider, ...bedrockNativeStreams() };
+			collection.setProvider(provider.id === "amazon-bedrock" ? nativeBedrock! : provider);
 		}
 		collection.setProvider(createClaudeCodeProvider(streamClaudeCode));
 		collection.setProvider(createCursorProvider(streamCursor));
 	}
-	providerSource?.sync(collection);
+	for (const source of providerSources.values()) source.sync(collection);
 	return collection;
 }
 
@@ -136,7 +160,7 @@ export function piEngineForSpec(spec: ResolvedModelSpec, background: boolean | (
 	const models: Models = piModels();
 	const nativeId = nativeSubscriptionId(spec.provider);
 	const registeredModel = spec.provider === "chatgpt" ? chatGPTModel(spec.id) : nativeId ? nativeSubscriptionModel(spec.provider, spec.id) : models.getModel(spec.provider, spec.id);
-	const custom = providerSource?.isCustom(spec.provider) ?? false;
+	const custom = isCustomRoute(spec.provider);
 	// Custom endpoint owners authorize image attempts independently of sparse
 	// discovery metadata. Never promote the registered/catalog capabilities.
 	const permitImages = (value: Model<Api>): Model<Api> => ({ ...value, input: ["text", "image"] });
