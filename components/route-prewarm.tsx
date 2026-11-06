@@ -25,17 +25,28 @@ type CodePlugin = {
 
 async function prewarmChatTranscript(): Promise<void> {
 	try {
-		const { streamdownPlugins } = await import("@/components/ai-elements/message");
-		const code = (streamdownPlugins as { code?: CodePlugin }).code;
-		if (!code) return;
+		// The code plugin import is a fraction of the transcript module graph;
+		// awaiting IT first lets the shiki engine/grammar load overlap the
+		// rest of the eval instead of trailing it. Same module instance and
+		// same plugin caches the chat route uses.
+		const codePluginReady = import("@streamdown/code");
+		const messageReady = import("@/components/ai-elements/message");
+		const { code } = (await codePluginReady) as { code?: CodePlugin };
 		// The plugin caches one highlighter per (language, themes); warming it
 		// here moves the shiki engine + grammar init off the first chat paint.
 		// "js" only: the engine init is the shared cost, other languages pay
 		// just their grammar load in the post-mount highlight effect.
-		code.highlight(
-			{ code: "const prewarm = 1;", language: "js", themes: code.getThemes() },
-			() => {},
-		);
+		if (code) {
+			try {
+				code.highlight(
+					{ code: "const prewarm = 1;", language: "js", themes: code.getThemes() },
+					() => {},
+				);
+			} catch {
+				// Highlighter not ready to accept work — the import alone still pays off.
+			}
+		}
+		await messageReady;
 	} catch {
 		// Best effort only — a failed prewarm must never break the host page.
 	}
