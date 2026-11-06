@@ -181,15 +181,19 @@ export class TranscriptAnchor extends Component<TranscriptAnchorProps> {
 	componentDidUpdate(_prev: TranscriptAnchorProps, _state: unknown, snapshot: AnchorSnapshot | null): void {
 		this.listen(this.props.mountFrom > 0);
 		if (!snapshot) return;
-		const scroller = this.props.scrollContextRef.current?.scrollRef.current;
-		if (!scroller) return;
+		const context = this.props.scrollContextRef.current;
+		const scroller = context?.scrollRef.current;
+		if (!context || !scroller) return;
 		if (snapshot.bottom) {
-			scroller.scrollTop = scroller.scrollHeight;
+			context.state.scrollTop = scroller.scrollHeight;
 			return;
 		}
 		if (!snapshot.first?.isConnected) return;
 		const moved = snapshot.first.getBoundingClientRect().top - snapshot.top;
-		if (moved !== 0) scroller.scrollTop += moved;
+		// Mark the correction as programmatic, including when native scroll
+		// anchoring already did it. Otherwise the queued scroll event can be
+		// read as downward user input and clear the just-released bottom lock.
+		context.state.scrollTop = scroller.scrollTop + moved;
 	}
 
 	render(): ReactNode {

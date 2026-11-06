@@ -34,6 +34,7 @@ const ROW = 100;
 const VIEW = 900;
 let scroller: HTMLElement & { _top: number };
 let rowsRoot: () => Element | null;
+let nativeAnchoredRows: number | null = null;
 
 function makeScroller() {
 	const element = document.createElement("div") as unknown as HTMLElement & { _top: number };
@@ -51,6 +52,10 @@ const originalRect = window.HTMLElement.prototype.getBoundingClientRect;
 window.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
 	const parent = this.parentElement;
 	if (parent && parent === rowsRoot()) {
+		if (nativeAnchoredRows !== null) {
+			scroller._top += (parent.children.length - nativeAnchoredRows) * ROW;
+			nativeAnchoredRows = parent.children.length;
+		}
 		const index = Array.prototype.indexOf.call(parent.children, this);
 		const top = index * ROW - scroller.scrollTop;
 		return { top, bottom: top + ROW, left: 0, right: 0, width: 0, height: ROW, x: 0, y: top, toJSON() {} } as DOMRect;
@@ -60,7 +65,15 @@ window.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement
 
 let stops = 0;
 function contextFor(isAtBottom: boolean): RefObject<StickToBottomContext | null> {
-	const state = { isAtBottom };
+	const state = {
+		isAtBottom,
+		ignoreScrollToTop: undefined as number | undefined,
+		get scrollTop() { return scroller.scrollTop; },
+		set scrollTop(value: number) {
+			scroller.scrollTop = value;
+			this.ignoreScrollToTop = scroller.scrollTop;
+		},
+	};
 	return { current: { scrollRef: { current: scroller }, state, stopScroll: () => { stops++; state.isAtBottom = false; } } as unknown as StickToBottomContext };
 }
 
@@ -111,6 +124,7 @@ async function mountAll(onStep?: () => void) {
 beforeEach(() => {
 	log = [];
 	stops = 0;
+	nativeAnchoredRows = null;
 	location.hash = "";
 	scroller = makeScroller();
 	rowsRoot = () => null;
@@ -154,16 +168,35 @@ describe("progressive transcript mount", () => {
 	});
 
 	it("keeps the visible rows still while older rows mount above", async () => {
-		await mount(<Harness count={40} context={contextFor(false)} />);
+		const context = contextFor(false);
+		await mount(<Harness count={40} context={context} />);
 		scroller.scrollTop = 50;
 		const newestFirst = () => Array.from(rowsRoot()!.children).find((row) => row.textContent === "row 28")!;
 		const before = newestFirst().getBoundingClientRect().top;
 		const tops: number[] = [];
-		await mountAll(() => tops.push(newestFirst().getBoundingClientRect().top));
+		await mountAll(() => {
+			tops.push(newestFirst().getBoundingClientRect().top);
+			assert.equal(context.current!.state.ignoreScrollToTop, scroller.scrollTop,
+				"the queued anchoring scroll must not count as downward user input");
+		});
 		assert.equal(rowsRoot()!.children.length, 40);
 		assert.ok(tops.length >= 3);
 		for (const top of tops) assert.equal(top, before);
 		assert.equal(scroller.scrollTop, 50 + 28 * ROW);
+	});
+
+	it("marks native scroll anchoring as programmatic even when no correction is needed", async () => {
+		const context = contextFor(false);
+		await mount(<Harness count={40} context={context} />);
+		scroller.scrollTop = 50;
+		nativeAnchoredRows = rowsRoot()!.children.length;
+		const row = rowsRoot()!.firstElementChild!;
+		const top = row.getBoundingClientRect().top;
+		await mountAll(() => {
+			assert.equal(row.getBoundingClientRect().top, top);
+			assert.equal(context.current!.state.ignoreScrollToTop, scroller.scrollTop,
+				"native anchoring must not restore the bottom lock after upward input");
+		});
 	});
 
 	it("stays at the bottom while mounting when stick-to-bottom is locked", async () => {
