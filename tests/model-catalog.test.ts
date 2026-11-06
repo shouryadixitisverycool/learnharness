@@ -7,6 +7,7 @@ const testData = fs.mkdtempSync(path.join(os.tmpdir(), "lh-cli-catalog-data-"));
 process.env.LH_DATA_DIR = testData;
 after(() => fs.rmSync(testData, { recursive: true, force: true }));
 const {
+	catalogContextLimit,
 	catalogContextLimits,
 	catalogDefaultsFor,
 	catalogProviders,
@@ -454,6 +455,23 @@ describe("the claude-code provider (native CLI authentication, no LearnHarness k
 		withClaudeInstalled(true, () => {
 			assert.equal(catalogContextLimits().has("claude-code:opus"), false);
 		});
+	});
+
+	it("catalogContextLimit(key) answers exactly what catalogContextLimits().get(key) does", () => {
+		const keys = () => [
+			...piModels().getProviders().flatMap((p) => piModels().getModels(p.id).map((m) => `${p.id}:${m.id}`)),
+			"openrouter:no-such-model", "nobody:nothing", "", "cursor:", "claude-code:opus",
+		];
+		const parity = () => {
+			const index = catalogContextLimits();
+			for (const key of keys()) assert.equal(catalogContextLimit(key), index.get(key), key);
+		};
+		parity();
+		withClaudeInstalled(true, parity);
+		withClaudeInstalled(false, parity);
+		withCursorInstalled(true, parity);
+		withCursorInstalled(false, parity);
+		withCursorInstalled(true, parity, false);
 	});
 
 	it('piEngineForSpec({ provider: "claude-code", id: "sonnet" }) resolves', () => {

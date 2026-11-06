@@ -98,6 +98,41 @@ export function catalogDefaults(): CatalogDefaults | null {
 	return catalogDefaultsFor(effectiveSettings().models.strong);
 }
 
+/** catalogProviders().some((p) => p.id === id && p.keyPresent), evaluating
+ *  only the rows for `id` (every row's check is a read; the piModels() sync
+ *  catalogProviders runs first is the caller's). */
+function catalogProviderKeyed(id: string): boolean {
+	if (AUTH_PROVIDER_KEYS.some((p) => p.id === id && keyValue(p.envVar) !== undefined)) return true;
+	if (id === "chatgpt" && chatGPTConnected()) return true;
+	if (id === CLAUDE_CODE_PROVIDER && claudeCodeAvailable()) return true;
+	if (id === CURSOR_PROVIDER && cursorAvailable()) return true;
+	if (NATIVE_SUBSCRIPTIONS.some((p) => p.logicalId === id && nativeSubscriptionConnected(p.providerId))) return true;
+	return id === CUSTOM_PROVIDER.id && customProviderUsable(effectiveSettings().customProvider) && customProviderAvailable();
+}
+
+/** catalogContextLimits().get(key) without building the whole index: the
+ *  same last-write-wins order (keyed pi providers in order, then the
+ *  ChatGPT and native subscription models), checking key presence only
+ *  for providers that actually carry `key`. */
+export function catalogContextLimit(key: string): number | undefined {
+	// One sync, then the same registry object for the walk (each piModels()
+	// call re-syncs the custom source from settings and auth on disk).
+	const models = piModels();
+	const subscription = [...chatGPTModels(), ...nativeSubscriptionModels()].findLast((model) => `${model.provider}:${model.id}` === key);
+	if (subscription) return subscription.contextWindow;
+	let limit: number | undefined;
+	const keyed = new Map<string, boolean>();
+	for (const provider of models.getProviders()) {
+		if (provider.id === CLAUDE_CODE_PROVIDER || !key.startsWith(`${provider.id}:`)) continue;
+		for (const model of models.getModels(provider.id)) {
+			if (`${provider.id}:${model.id}` !== key) continue;
+			if (!keyed.has(provider.id)) keyed.set(provider.id, catalogProviderKeyed(provider.id));
+			if (keyed.get(provider.id)) limit = model.contextWindow;
+		}
+	}
+	return limit;
+}
+
 /** Project the resolved per-role specs to the client DTO (pure — the
  *  settings UI's "Default: <actual pinned model>" caption reads this).
  *  BYOK (owner, 2026-09-22): an empty chain projects to NULL — the caption

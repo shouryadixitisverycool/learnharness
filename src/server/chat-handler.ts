@@ -52,7 +52,7 @@ import { hasProbeDone, hasUnresolvedQuestion } from "../core/native-messages.ts"
 import { systemPromptFor } from "../agent/teacher-agent.ts";
 import { sessionAttachments } from "./attachments.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens } from "./compaction.ts";
-import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
+import { catalogContextLimit, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
 import { deriveChat } from "../core/chat-derive.ts";
 import { settledTurnResponse } from "./turn-runs.ts";
@@ -300,7 +300,7 @@ export async function handleChatInput(
 			kind: record.kind === "practice" ? "practice" : hasProbeDone(record.messages) ? "teach" : "probe",
 			thresholdTokens: effectiveThresholdTokens(
 				effective.compaction?.thresholdTokens,
-				catalogContextLimits().get(modelIdForCompaction),
+				catalogContextLimit(modelIdForCompaction),
 			),
 			systemPromptTokens: systemPromptTokens(record),
 		},
@@ -706,7 +706,7 @@ export async function handleChatInput(
 							kind: freshRecord.kind === "practice" ? "practice" : freshRecord.probeDone ? "teach" : "probe",
 							thresholdTokens: effectiveThresholdTokens(
 								fresh.compaction?.thresholdTokens,
-								catalogContextLimits().get(kickModelId),
+								catalogContextLimit(kickModelId),
 							),
 							systemPromptTokens: systemPromptTokens(freshRecord),
 						};
