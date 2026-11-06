@@ -4,6 +4,7 @@ import type { GraphSnapshot } from "../core/contracts.ts";
 import type { GraphCostSummary } from "../core/cost-summary.ts";
 import { graphCostSummary } from "../core/cost-summary.ts";
 import { graphSnapshot } from "../core/graph.ts";
+import { deriveChat } from "../core/chat-derive.ts";
 import { birthSessionPartition } from "../core/session-clusters.ts";
 import {
 	deleteNodeTraces,
@@ -35,9 +36,12 @@ export function graphCosts(): GraphCostSummary {
 	const chats = stores.chatStore
 		.listChats()
 		.flatMap((summary) => {
-			const record = stores.chatStore.getChat(summary.id);
-			return record?.extractions?.length
-				? [{ title: record.title ?? summary.id, extractions: record.extractions }]
+			// Only the title and extraction log, remembered per record file
+			// version (ChatStore.derive): no full parse per chat per request.
+			const costs = deriveChat(stores.chatStore, summary.id, "graph-costs", (record) =>
+				record.extractions?.length ? { title: record.title, extractions: record.extractions } : null);
+			return costs
+				? [{ title: costs.title ?? summary.id, extractions: costs.extractions }]
 				: [];
 		});
 	const sources = stores.graphStore

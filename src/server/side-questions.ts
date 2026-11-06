@@ -264,6 +264,9 @@ export function restoreParkedSideQuestions(chatId: string, markers: readonly LhM
 
 /** The settle paths and the dismiss route: append whatever may land now. */
 export function flushParkedSideQuestions(chatStore: ChatStore, chatId: string): void {
+	// Nothing parked: takeFlushableSideQuestions returns [] for any record,
+	// so skip reading one (a full parse on every settle).
+	if (!parked().get(chatId)?.length) return;
 	const record = chatStore.getChat(chatId);
 	if (!record) return;
 	const markers = takeFlushableSideQuestions(chatId, record.messages);

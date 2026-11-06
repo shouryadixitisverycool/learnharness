@@ -69,6 +69,7 @@ import { formatChainLine } from "./chains.ts";
 import { attachImpToCommunities, birthSessionOf, birthSessionPartition } from "./session-clusters.ts";
 import { sourceFileLabel } from "./source-label.ts";
 import type { ChatStore, GraphStore } from "./ports.ts";
+import { deriveChat } from "./chat-derive.ts";
 
 /** The storage ports every graph operation needs, passed explicitly. */
 export interface GraphDeps {
@@ -538,9 +539,9 @@ export function graphSnapshot(deps: GraphDeps, sourceNames: Readonly<Record<stri
 	const sessions: Record<string, string> = {};
 	const fileSources: Record<string, string> = {};
 	for (const id of sourceIds) {
-		const chat = deps.chatStore.getChat(id);
-		if (chat) {
-			sessions[id] = chat.title;
+		const title = deriveChat(deps.chatStore, id, "title", (chat) => ({ title: chat.title }));
+		if (title) {
+			sessions[id] = title.title;
 			continue;
 		}
 		const source = deps.graphStore.readSources().find((s) => s.id === id);
