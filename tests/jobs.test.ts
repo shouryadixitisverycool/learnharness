@@ -1827,6 +1827,34 @@ describe("BYOK job refusal (no factory floor)", () => {
 	});
 });
 
+describe("job refusal when the slot's model no longer resolves", () => {
+	it("an engine build that throws (cheap slot on removed cursor:grok-4.7-fast) lands error and steers the failure", async () => {
+		const chat = chatStore.createChat("Test: removed provider spawn");
+		trackChat(chat.id);
+		chatStore.saveMessages(chat.id, nativeToolMessages("hi", "research", "call-rp1", RESEARCH_INPUT));
+		const job = jobStore.createJob({ kind: "research", chatId: chat.id, toolCallId: "call-rp1" });
+		trackJob(job.id);
+
+		const delivery = fakeDeliver();
+		// What the server's resolveEngine does for a slot on a provider that is
+		// no longer registered: piEngineForSpec throws.
+		const { piEngineForSpec } = await import("../src/agent/models.ts");
+		const runner = createJobRunner({
+			chatStore,
+			jobStore,
+			deliver: delivery.deliver,
+			engineFor: () => piEngineForSpec({ provider: "cursor", id: "grok-4.7-fast" }),
+		});
+		await runner.runJob(job.id);
+
+		const done = jobStore.getJob(job.id)!;
+		assert.equal(done.status, "error", "never left running");
+		assert.equal(done.error, "The selected model is unavailable.");
+		assert.equal(delivery.steers.length, 1, "the teacher is not stranded");
+		assert.ok(delivery.steers[0]!.content.includes("Research failed: The selected model is unavailable."));
+	});
+});
+
 // ─── provider-key: the key-presence job refusal (owner, 2026-09-25) ─────────
 
 describe("provider-key job refusal (key-presence interlude)", () => {
