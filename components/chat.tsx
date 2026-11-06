@@ -61,6 +61,7 @@ import type { PlanBlockData, SideQuestionDetails } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { SessionFind } from "@/components/session-find";
 import { SessionMessageNavigation } from "@/components/session-navigation";
+import { BottomPin, TranscriptAnchor, useProgressiveMount } from "@/components/transcript-anchor";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { createCiteAction, type CitationEditTarget } from "@/components/citation-actions";
 import { CitationActionsContext, type CitationActions } from "@/components/citation-chip";
@@ -301,6 +302,9 @@ export function Chat({
 	const sessionFindScopeRef = useRef<HTMLDivElement | null>(null);
 	const scrollContextRef = useRef<StickToBottomContext | null>(null);
 	const sourceTextParts = useMemo(() => firstSourceTextParts(messages), [messages]);
+	// Newest rows first, older ones over the next frames (transcript-anchor.tsx).
+	const mountFrom = useProgressiveMount(messages.length);
+	const transcriptRootRef = useRef<HTMLDivElement | null>(null);
 
 	// The reattach settled terminal → the sync-and-continue seam (below).
 	setReattachSettled(() => reattachSettledRef.current());
@@ -1594,8 +1598,12 @@ export function Chat({
 				<Conversation className="h-full min-w-0 flex-1" initial="instant" contextRef={scrollContextRef}>
 					<SessionMessageNavigation />
 					<TranscriptElementReporter onElement={setTranscriptElement} />
-					<ConversationContent className="min-h-full gap-0 p-0 [container-type:inline-size]">
-						<div data-session-find-root="" className={`${COLUMN} flex flex-1 flex-col gap-4 pt-4`}>
+					{/* overflow-auto is server-rendered so the pre-paint bottom pin
+					    (BottomPin) scrolls the real scroller before hydration;
+					    StickToBottom would otherwise add it as an inline style
+					    after hydration and reset the scroll position. */}
+					<ConversationContent scrollClassName="overflow-auto" className="min-h-full gap-0 p-0 [container-type:inline-size]">
+						<div ref={transcriptRootRef} data-session-find-root="" className={`${COLUMN} flex flex-1 flex-col gap-4 pt-4`}>
 							{messages.length === 0 && !busy && (
 								<ConversationEmptyState
 									title="New session"
@@ -1603,8 +1611,9 @@ export function Chat({
 								/>
 							)}
 
+							<TranscriptAnchor mountFrom={mountFrom} rootRef={transcriptRootRef} scrollContextRef={scrollContextRef}>
 							{messages.map((m, mi) =>
-								m.role === "user" && isSubagentSteer(m) ? (
+								mi < mountFrom ? null : m.role === "user" && isSubagentSteer(m) ? (
 									// Sub-agent delivery (wake-pipeline steer): NO message bubble — the
 									// artifact card sits in the transcript column directly, full width
 									// and centered like the teacher's artifacts (contracts.ts "THE ASYNC
@@ -1841,6 +1850,7 @@ export function Chat({
 									)}
 								</Fragment>
 							))}
+							</TranscriptAnchor>
 
 							{/* THE placeholder, ACTION-gated (owner, optimistic round
 							    3, 2026-10-02): spinner + shimmered Thinking… from the
@@ -2010,6 +2020,7 @@ export function Chat({
 					}}
 				/>
 				</Conversation>
+				<BottomPin scrollContextRef={scrollContextRef} />
 				{sideThread.state?.mode === "panel" && (
 					<SideThreadPanel>
 						<SideThreadBody
