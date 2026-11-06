@@ -56,7 +56,10 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// reads the models section alone.
 	const readRecord = useCallback(() => {
 		if (chatId) {
-			fetch(`/api/chats/${chatId}`)
+			// Slim read (only=settings): the pill needs the session's model
+			// stamp, not the transcript — the full record re-sends every
+			// message on a long session.
+			fetch(`/api/chats/${chatId}?only=settings`)
 				.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
 				.then((body) => setSession({ settings: body.settings }))
 				.catch(() => {

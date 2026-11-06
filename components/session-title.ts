@@ -11,7 +11,9 @@ export function useSessionTitle(chatId: string, initialTitle: string) {
 	const refresh = useCallback(async () => {
 		const request = ++revision.current;
 		try {
-			const response = await fetch(`/api/chats/${encodeURIComponent(chatId)}`);
+			// Slim read (only=title): this hook needs the title alone; the
+			// full record would re-send the whole transcript.
+			const response = await fetch(`/api/chats/${encodeURIComponent(chatId)}?only=title`);
 			if (!response.ok) return;
 			const record = await response.json() as { title?: string };
 			if (request === revision.current && typeof record.title === "string") setTitle(record.title);
