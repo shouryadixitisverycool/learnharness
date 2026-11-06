@@ -8,6 +8,7 @@ import { ActivityProvider } from "@/components/activity-dock";
 import { ServerEventsProvider } from "@/components/server-events";
 import { AppearanceProvider } from "@/components/settings/appearance";
 import UpdateBanner from "@/components/update-banner";
+import RoutePrewarm from "@/components/route-prewarm";
 import { resolveSettings, SYSTEM_MODE_SCRIPT } from "@/src/core";
 import { readSettingsRecord } from "@/src/server";
 
@@ -52,6 +53,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 			</ServerEventsProvider>
 			{/* Auto-update banner (Wave C): fixed card, Electron-only pushes. */}
 			<UpdateBanner />
+			{/* Idle-only fetch+eval of the chat transcript chunks (post-LCP), so
+				 opening a chat from here skips that cost. Renders nothing. */}
+			<RoutePrewarm />
 		</body>
 		</html>
 	);
