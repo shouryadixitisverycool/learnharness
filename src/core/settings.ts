@@ -313,6 +313,101 @@ export function customProviderUsable(
 	return Boolean(cp?.baseUrl);
 }
 
+// ─── Amazon Bedrock (API key + region) ───────────────────────────────────────
+// NON-SECRET config only: the region and the models discovery found in the
+// user's AWS account. The Bedrock API key lives in the auth store
+// (BEDROCK_PROVIDER.envVar), never here. Each model keeps only what AWS
+// reported; display metadata (limits, reasoning, prices) is joined from
+// pi-ai's Bedrock catalog at registration (server/bedrock-provider.ts), so
+// a pi-ai upgrade refreshes it without a rediscovery.
+
+/** Commercial regions that run Bedrock, for the editor's dropdown. Any other
+ *  region shaped like an AWS region id can be typed through "Other". */
+export const BEDROCK_REGIONS: readonly string[] = [
+	"us-east-1", "us-east-2", "us-west-1", "us-west-2",
+	"ca-central-1", "ca-west-1", "sa-east-1", "mx-central-1",
+	"eu-central-1", "eu-central-2", "eu-north-1", "eu-south-1", "eu-south-2",
+	"eu-west-1", "eu-west-2", "eu-west-3",
+	"il-central-1", "me-central-1", "me-south-1", "af-south-1",
+	"ap-east-2", "ap-northeast-1", "ap-northeast-2", "ap-northeast-3",
+	"ap-south-1", "ap-south-2", "ap-southeast-1", "ap-southeast-2",
+	"ap-southeast-3", "ap-southeast-4", "ap-southeast-5", "ap-southeast-7",
+	"us-gov-east-1", "us-gov-west-1",
+];
+
+/** An AWS region id's shape (e.g. eu-north-1, us-gov-west-1); "" if not one. */
+export function normalizeBedrockRegion(raw: unknown): string {
+	if (typeof raw !== "string") return "";
+	const value = raw.trim().toLowerCase();
+	return /^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$/.test(value) ? value : "";
+}
+
+/** One model discovery found usable in the account. `id` is what Converse
+ *  is called with: a plain model id (on-demand) or a system inference
+ *  profile id (global.* / eu.* …). */
+export interface BedrockModel {
+	id: string;
+	/** AWS's modelName (e.g. "Nova Micro"), for unknown-to-pi naming. */
+	awsName?: string;
+	/** AWS lists IMAGE among the input modalities. */
+	image?: boolean;
+	/** AWS's Converse maxTokensMaximum, when it reports one. */
+	maxTokens?: number;
+	/** The effort values AWS's Converse schema lists for `reasoning_config`
+	 *  (OpenAI GPT models, e.g. ["none","low",…,"max"]). Absent = AWS lists
+	 *  no effort enum. */
+	reasoningLevels?: string[];
+	/** The availability API reported agreement, authorization, entitlement
+	 *  and region all available. False means "not confirmed", not "blocked". */
+	accessConfirmed?: boolean;
+}
+
+export interface BedrockProviderSettings {
+	/** Normalized region id. Empty/absent = not configured. */
+	region?: string;
+	/** The last discovery's snapshot (rewritten on save/refresh). */
+	models?: BedrockModel[];
+}
+
+/** Bedrock is configured once a region is saved (the key is separate). */
+export function bedrockProviderConfigured(
+	bp: BedrockProviderSettings | undefined,
+): bp is BedrockProviderSettings & { region: string } {
+	return Boolean(bp?.region);
+}
+
+/** The bedrockProvider section: valid region or none; models with a
+ *  non-empty id (deduped), flags only when true, maxTokens as positive int.
+ *  Clamp-never-reject, like customProvider. */
+export function sanitizeBedrockProvider(raw: Record<string, unknown>): BedrockProviderSettings {
+	const out: BedrockProviderSettings = {};
+	const region = normalizeBedrockRegion(raw.region);
+	if (region) out.region = region;
+	if (Array.isArray(raw.models)) {
+		const byId = new Map<string, BedrockModel>();
+		for (const m of raw.models) {
+			if (typeof m !== "object" || m === null || Array.isArray(m)) continue;
+			const rec = m as Record<string, unknown>;
+			if (typeof rec.id !== "string") continue;
+			const id = rec.id.trim();
+			if (!id || /\s/.test(id)) continue;
+			const model: BedrockModel = { id };
+			if (typeof rec.awsName === "string" && rec.awsName.trim()) model.awsName = rec.awsName.trim();
+			if (rec.image === true) model.image = true;
+			const maxTokens = typeof rec.maxTokens === "number" && Number.isInteger(rec.maxTokens) && rec.maxTokens > 0 ? rec.maxTokens : undefined;
+			if (maxTokens) model.maxTokens = maxTokens;
+			if (rec.accessConfirmed === true) model.accessConfirmed = true;
+			if (Array.isArray(rec.reasoningLevels)) {
+				const levels = [...new Set(rec.reasoningLevels.filter((v): v is string => typeof v === "string" && /^[a-z]{1,16}$/.test(v)))];
+				if (levels.length) model.reasoningLevels = levels;
+			}
+			byId.set(id, model);
+		}
+		out.models = [...byId.values()];
+	}
+	return out;
+}
+
 /** First-run gate (model-slots wave, owner 2026-09-20): the app refuses
  *  to start chats until the user has actively picked all three slots —
  *  there ARE no defaults for 33 providers; a configured app is one whose
@@ -501,6 +596,8 @@ export interface UserSettings {
 	models?: ModelsSettings;
 	/** The custom OpenAI-compatible endpoint (non-secret config only). */
 	customProvider?: CustomProviderSettings;
+	/** Amazon Bedrock's region + discovered models (non-secret config only). */
+	bedrockProvider?: BedrockProviderSettings;
 	appearance?: AppearanceSettings;
 	graph?: GraphSettings;
 	compaction?: CompactionSettings;
@@ -897,6 +994,9 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 	}
 	if (r.customProvider !== null && typeof r.customProvider === "object" && !Array.isArray(r.customProvider)) {
 		out.customProvider = sanitizeCustomProvider(r.customProvider as Record<string, unknown>);
+	}
+	if (r.bedrockProvider !== null && typeof r.bedrockProvider === "object" && !Array.isArray(r.bedrockProvider)) {
+		out.bedrockProvider = sanitizeBedrockProvider(r.bedrockProvider as Record<string, unknown>);
 	}
 	if (r.graph !== null && typeof r.graph === "object" && !Array.isArray(r.graph)) {
 		out.graph = sanitizeGraph(r.graph as Record<string, unknown>);
