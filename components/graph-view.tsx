@@ -70,6 +70,7 @@ import { ClockIcon, FileTextIcon, ListTreeIcon, Loader2Icon, SearchIcon, Setting
 import { incrementalLayout, propositionSessionHref, type GraphCostSummary, type GraphNode, type GraphSnapshot } from "@/src/core";
 import { planCostLabel } from "@/components/usage-format";
 import { CLUSTER_LIGHTNESS, GraphCanvasRenderer, type GraphRenderSettings } from "./graph-canvas.ts";
+import { suspendWhileLeaving } from "@/lib/route-transition";
 import { useAppearance } from "@/components/settings/appearance";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { useActivity } from "@/components/activity-dock";
@@ -1387,7 +1388,12 @@ export function GraphView({
 			initialCamera,
 		);
 		rendererRef.current = renderer;
+		// Leaving home: stop drawing (and the live physics) the moment the
+		// navigation starts, so the destination's render has the main thread.
+		// The page unmounts right after; nothing visible changes here.
+		const stopSuspending = suspendWhileLeaving(renderer);
 		return () => {
+			stopSuspending();
 			rendererRef.current = null;
 			// Flush a pending camera write so an unmount <250ms after a
 			// move still persists the user's last standpoint.
