@@ -92,6 +92,31 @@ export function distanceFromBottom(scroller: HTMLElement): number {
 	return scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop;
 }
 
+const SCROLL_INPUTS = ["wheel", "touchstart", "touchmove", "keydown", "pointerdown"] as const;
+const UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
+
+/** Input that scrolls the transcript toward older rows: a wheel up, a finger
+ * moving down, an up/PageUp/Home/Shift+Space key, or a press on the
+ * scroller's own box (its scrollbar). */
+export function upwardScrollIntent(event: Event, scroller: HTMLElement, touchStartY: number | null): boolean {
+	switch (event.type) {
+		case "wheel":
+			return (event as WheelEvent).deltaY < 0;
+		case "touchmove": {
+			const y = (event as TouchEvent).touches[0]?.clientY;
+			return touchStartY !== null && y !== undefined && y > touchStartY;
+		}
+		case "keydown": {
+			const key = event as KeyboardEvent;
+			return UP_KEYS.has(key.key) || (key.key === " " && key.shiftKey);
+		}
+		case "pointerdown":
+			return event.target === scroller;
+		default:
+			return false;
+	}
+}
+
 /** Keeps the visible rows still while older rows mount above them. Renders
  * no DOM of its own. It reads positions right before React mutates the DOM
  * (getSnapshotBeforeUpdate) and corrects scrollTop right after, before paint.
@@ -99,8 +124,47 @@ export function distanceFromBottom(scroller: HTMLElement): number {
  * zero when Chrome's own scroll anchoring already compensated. While
  * mounting is in progress, a view locked at the bottom stays at the bottom
  * (the dock spacer's first measurement, a streamed delta). Once every row is
- * mounted it does nothing: stick-to-bottom owns scrolling as before. */
+ * mounted it does nothing: stick-to-bottom owns scrolling as before.
+ *
+ * Leaving the bottom while rows mount: stick-to-bottom ignores scroll events
+ * while a content resize is pending, and its wheel check misses a wheel over
+ * a nested overflow element (a code block). Today the next scroll event
+ * catches that; while chunks resize the content every frame it would not,
+ * and the resize spring would pull the learner back down. So during
+ * mounting, upward-scroll INPUT inside the scroller releases the lock
+ * directly, exactly as an unsuppressed scroll-up would. */
 export class TranscriptAnchor extends Component<TranscriptAnchorProps> {
+	private touchY: number | null = null;
+	private listening = false;
+
+	private readonly onInput = (event: Event): void => {
+		const context = this.props.scrollContextRef.current;
+		const scroller = context?.scrollRef.current;
+		if (!context || !scroller || !(event.target instanceof Node) || !scroller.contains(event.target)) return;
+		if (event.type === "touchstart") {
+			this.touchY = (event as TouchEvent).touches[0]?.clientY ?? null;
+			return;
+		}
+		if (upwardScrollIntent(event, scroller, this.touchY)) context.stopScroll();
+	};
+
+	private listen(on: boolean): void {
+		if (on === this.listening) return;
+		this.listening = on;
+		for (const type of SCROLL_INPUTS) {
+			if (on) window.addEventListener(type, this.onInput, { capture: true, passive: true });
+			else window.removeEventListener(type, this.onInput, { capture: true });
+		}
+	}
+
+	componentDidMount(): void {
+		this.listen(this.props.mountFrom > 0);
+	}
+
+	componentWillUnmount(): void {
+		this.listen(false);
+	}
+
 	getSnapshotBeforeUpdate(prev: TranscriptAnchorProps): AnchorSnapshot | null {
 		if (prev.mountFrom === 0) return null;
 		const context = this.props.scrollContextRef.current;
@@ -115,6 +179,7 @@ export class TranscriptAnchor extends Component<TranscriptAnchorProps> {
 	}
 
 	componentDidUpdate(_prev: TranscriptAnchorProps, _state: unknown, snapshot: AnchorSnapshot | null): void {
+		this.listen(this.props.mountFrom > 0);
 		if (!snapshot) return;
 		const scroller = this.props.scrollContextRef.current?.scrollRef.current;
 		if (!scroller) return;

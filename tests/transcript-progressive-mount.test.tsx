@@ -10,7 +10,7 @@ import type { Root } from "react-dom/client";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import {
 	BOTTOM_PIN_SCRIPT, BottomPin, FIRST_FRAME_ROWS, ROWS_PER_FRAME, TranscriptAnchor,
-	distanceFromBottom, firstMountedIndex, nextMountedIndex, useProgressiveMount,
+	distanceFromBottom, firstMountedIndex, nextMountedIndex, upwardScrollIntent, useProgressiveMount,
 } from "../components/transcript-anchor.tsx";
 
 const { window, document } = parseHTML("<html><body></body></html>");
@@ -21,6 +21,7 @@ Object.assign(globalThis, {
 	document,
 	Element: window.Element,
 	HTMLElement: window.HTMLElement,
+	Node: window.Node,
 	Event: window.Event,
 	requestAnimationFrame: (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0) as unknown as number,
 	cancelAnimationFrame: (id: number) => clearTimeout(id),
@@ -57,8 +58,10 @@ window.HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement
 	return originalRect ? originalRect.call(this) : ({ top: 0 } as DOMRect);
 };
 
+let stops = 0;
 function contextFor(isAtBottom: boolean): RefObject<StickToBottomContext | null> {
-	return { current: { scrollRef: { current: scroller }, state: { isAtBottom } } as unknown as StickToBottomContext };
+	const state = { isAtBottom };
+	return { current: { scrollRef: { current: scroller }, state, stopScroll: () => { stops++; state.isAtBottom = false; } } as unknown as StickToBottomContext };
 }
 
 function rowsFor(count: number) {
@@ -82,9 +85,9 @@ function Harness({ count, context }: { count: number; context: RefObject<StickTo
 
 const roots: { root: Root; host: HTMLElement }[] = [];
 
-async function mount(element: React.ReactElement) {
+async function mount(element: React.ReactElement, parent: HTMLElement = document.body as unknown as HTMLElement) {
 	const host = document.createElement("div") as unknown as HTMLElement;
-	document.body.append(host);
+	parent.append(host);
 	const { createRoot } = await import("react-dom/client");
 	const root = createRoot(host);
 	roots.push({ root, host });
@@ -107,6 +110,7 @@ async function mountAll(onStep?: () => void) {
 
 beforeEach(() => {
 	log = [];
+	stops = 0;
 	location.hash = "";
 	scroller = makeScroller();
 	rowsRoot = () => null;
@@ -117,6 +121,7 @@ afterEach(async () => {
 		await act(async () => { root.unmount(); });
 		host.remove();
 	}
+	scroller.remove();
 });
 
 describe("progressive transcript mount", () => {
@@ -169,6 +174,46 @@ describe("progressive transcript mount", () => {
 		await mountAll(() => distances.push(distanceFromBottom(scroller)));
 		assert.ok(distances.length >= 3);
 		assert.deepEqual(new Set(distances), new Set([0]));
+	});
+
+	it("releases the bottom lock on upward input inside the scroller while mounting", async () => {
+		// The scroller wraps the rows, as in the app.
+		document.body.append(scroller);
+		await mount(<Harness count={40} context={contextFor(true)} />, scroller);
+		const nested = rowsRoot()!.children[3]!;
+		const wheel = (deltaY: number, target: Element) => {
+			const event = new window.Event("wheel", { bubbles: true }) as unknown as WheelEvent;
+			Object.defineProperty(event, "deltaY", { value: deltaY });
+			target.dispatchEvent(event);
+		};
+		wheel(120, nested);
+		assert.equal(stops, 0);
+		wheel(-120, document.body as unknown as Element);
+		assert.equal(stops, 0);
+		wheel(-120, nested);
+		assert.equal(stops, 1);
+		await mountAll();
+		wheel(-120, nested);
+		assert.equal(stops, 1, "no listener once every row is mounted");
+	});
+
+	it("classifies upward scroll input", () => {
+		const target = document.createElement("div") as unknown as HTMLElement;
+		const event = (type: string, props: Record<string, unknown>, on: EventTarget = target) => {
+			const e = new window.Event(type) as unknown as Event;
+			for (const [k, v] of Object.entries(props)) Object.defineProperty(e, k, { value: v });
+			Object.defineProperty(e, "target", { value: on });
+			return e;
+		};
+		assert.equal(upwardScrollIntent(event("wheel", { deltaY: -1 }), target, null), true);
+		assert.equal(upwardScrollIntent(event("wheel", { deltaY: 1 }), target, null), false);
+		assert.equal(upwardScrollIntent(event("touchmove", { touches: [{ clientY: 300 }] }), target, 200), true);
+		assert.equal(upwardScrollIntent(event("touchmove", { touches: [{ clientY: 100 }] }), target, 200), false);
+		assert.equal(upwardScrollIntent(event("keydown", { key: "PageUp" }), target, null), true);
+		assert.equal(upwardScrollIntent(event("keydown", { key: " ", shiftKey: true }), target, null), true);
+		assert.equal(upwardScrollIntent(event("keydown", { key: "ArrowDown" }), target, null), false);
+		assert.equal(upwardScrollIntent(event("pointerdown", {}), target, null), true);
+		assert.equal(upwardScrollIntent(event("pointerdown", {}, document.body), target, null), false);
 	});
 
 	it("mounts everything at once when the hash names a message", async () => {
