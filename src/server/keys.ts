@@ -43,6 +43,7 @@ import {
 	AUTH_KEYS,
 	AUTH_PROVIDER_KEYS,
 	AUTH_PROVIDER_ENV_VARS,
+	BEDROCK_PROVIDER,
 	CUSTOM_PROVIDER,
 	type AuthKeyInfo,
 	type AuthKeyStatus,
@@ -55,6 +56,7 @@ import {
 import { authStore } from "../store/auth.ts";
 import { isSubscriptionProvider, subscriptionConnected } from "../agent/subscription-connections.ts";
 import { customProviderAvailable, installCustomProviderSource } from "./custom-provider.ts";
+import { bedrockProviderAvailable, installBedrockProviderSource } from "./bedrock-provider.ts";
 import { claudeCodeAvailable } from "./claude-code-config.ts";
 import { CLAUDE_CODE_PROVIDER } from "../agent/claude-code/constants.ts";
 import { cursorAvailable } from "./cursor-config.ts";
@@ -68,7 +70,7 @@ import { authEnvRecord as boot } from "../core/auth-env.ts";
 /** Ordinary writable key names. Custom auth writes must use the atomic
  * endpoint-binding seam, never the generic single-key API. */
 export function isWritableAuthKey(id: string): boolean {
-	return id !== CUSTOM_AUTH_BINDING && id !== CUSTOM_PROVIDER.envVar && (isKnownAuthKey(id) || isProviderEnvVar(id));
+	return id !== CUSTOM_AUTH_BINDING && id !== CUSTOM_PROVIDER.envVar && id !== BEDROCK_PROVIDER.envVar && (isKnownAuthKey(id) || isProviderEnvVar(id));
 }
 
 /** The settings page's provider dropdown: every pi-ai provider that takes
@@ -103,6 +105,9 @@ export function initAuthEnv(): void {
 		// semantics, exactly like the curated vars.
 		...AUTH_PROVIDER_KEYS.map((p) => p.envVar),
 		CUSTOM_PROVIDER.envVar,
+		// Managed for the env snapshot and the fresh-user switch only: the
+		// Bedrock file key is never reflected into process.env (below).
+		BEDROCK_PROVIDER.envVar,
 	]);
 	if (envKeysIgnored()) {
 		// THE FRESH-USER SWITCH: delete every managed env var (re-run on
@@ -119,7 +124,7 @@ export function initAuthEnv(): void {
 		}
 	}
 	for (const [name, value] of Object.entries(fileVars)) {
-		if (!isManagedName(name)) continue;
+		if (name === BEDROCK_PROVIDER.envVar || !isManagedName(name)) continue;
 		if (process.env[name] === undefined) {
 			process.env[name] = value;
 			record.fillGap.add(name);
@@ -166,7 +171,7 @@ export function resolveKeyStatuses(
 			present: live !== undefined,
 			// Custom keys may be one character: even a masked suffix can expose
 			// the entire credential. Preserve inventory, return no key characters.
-			masked: live !== undefined ? id === CUSTOM_PROVIDER.envVar ? "••••" : `${maskKey(live)} (${live.trim().length} chars)` : null,
+			masked: live !== undefined ? id === CUSTOM_PROVIDER.envVar || id === BEDROCK_PROVIDER.envVar ? "••••" : `${maskKey(live)} (${live.trim().length} chars)` : null,
 			source: isRealEnv ? "env" : live !== undefined ? "file" : "none",
 			shadowedByEnv: isRealEnv && fileValue !== undefined && envValue !== fileValue,
 		});
@@ -176,7 +181,7 @@ export function resolveKeyStatuses(
 
 /** The GET view: every curated key (present or not) + unknown file vars. */
 export function keyStatuses(): AuthKeyStatus[] {
-	return resolveKeyStatuses(authStore.authVars(), process.env, boot().realEnv, new Set([...AUTH_PROVIDER_ENV_VARS, CUSTOM_PROVIDER.envVar]));
+	return resolveKeyStatuses(authStore.authVars(), process.env, boot().realEnv, new Set([...AUTH_PROVIDER_ENV_VARS, CUSTOM_PROVIDER.envVar, BEDROCK_PROVIDER.envVar]));
 }
 
 /** The live value for one var, env-first (the env-wins rule) — the canonical
@@ -200,6 +205,7 @@ export function keyValue(id: string): string | undefined {
  * no key at all: nothing to gate, present by definition. */
 export function providerKeyPresent(provider: string): boolean {
 	if (provider === CUSTOM_PROVIDER.id) return customProviderAvailable();
+	if (provider === BEDROCK_PROVIDER.id) return bedrockProviderAvailable();
 	// Explicit opt-in + installation only, never authentication readiness.
 	// Consulted at admission, not inside already-running agent loops.
 	if (provider === CLAUDE_CODE_PROVIDER) return claudeCodeAvailable();
@@ -217,6 +223,7 @@ export function providerKeyPresent(provider: string): boolean {
  */
 export function saveKey(id: string, value: string): { ok: true; status: AuthKeyStatus } | { ok: false; error: string } {
 	if (id === CUSTOM_PROVIDER.envVar || id === CUSTOM_AUTH_BINDING) return { ok: false, error: "Use the custom endpoint editor" };
+	if (id === BEDROCK_PROVIDER.envVar) return { ok: false, error: "Use the Amazon Bedrock editor" };
 	const shape = isProviderEnvVar(id) ? genericProviderKeyGuard(id, value) : validateKeyShape(id, value);
 	if (!shape.ok) return { ok: false, error: shape.error };
 	const trimmed = value.trim();
@@ -237,6 +244,7 @@ export function saveKey(id: string, value: string): { ok: true; status: AuthKeyS
  */
 export function deleteKey(id: string): AuthKeyStatus {
 	if (id === CUSTOM_PROVIDER.envVar || id === CUSTOM_AUTH_BINDING) throw new Error("Use the custom endpoint editor");
+	if (id === BEDROCK_PROVIDER.envVar) throw new Error("Use the Amazon Bedrock editor");
 	authStore.deleteAuthVar(id);
 	const record = boot();
 	if (record.fillGap.has(id) && !record.realEnv.has(id)) {
@@ -250,3 +258,4 @@ export function deleteKey(id: string): AuthKeyStatus {
 // imported by every route/handler path that touches keys).
 initAuthEnv();
 installCustomProviderSource();
+installBedrockProviderSource();

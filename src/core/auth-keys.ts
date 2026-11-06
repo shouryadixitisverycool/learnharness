@@ -94,7 +94,8 @@ export interface AuthProviderInfo {
  * loudly instead of drifting silently.
  *
  * EXCLUDED by owner spec — providers whose auth is not a plain key this
- * wave: github-copilot (OAuth), amazon-bedrock (AWS creds), google-vertex
+ * wave: github-copilot (OAuth), amazon-bedrock (AWS creds; its bearer-key
+ * mode has its own editor, see BEDROCK_PROVIDER below), google-vertex
  * (ADC), azure (needs a base URL), the cloudflare
  * account-scoped pair. Anthropic keeps ANTHROPIC_API_KEY only — its
  * AUTH_TOKEN/OAUTH_TOKEN alternates stay env-only. openai-codex exposes
@@ -151,6 +152,20 @@ export const CUSTOM_PROVIDER = {
 	id: "custom",
 	envVar: "CUSTOM_OPENAI_API_KEY",
 	label: "Custom endpoint",
+} as const;
+
+/**
+ * Amazon Bedrock through a Bedrock API key (bearer token) plus a region.
+ * NOT part of AUTH_PROVIDER_KEYS: pi-ai's env table has no plain key for it
+ * (it reads AWS credential chains), and the parity test pins that table.
+ * The key is stored under the env-var name pi-ai reads, but LearnHarness
+ * never copies the file value into process.env; server/bedrock-provider.ts
+ * passes it per request. Models come from the account's own discovery.
+ */
+export const BEDROCK_PROVIDER = {
+	id: "amazon-bedrock",
+	envVar: "AWS_BEARER_TOKEN_BEDROCK",
+	label: "Amazon Bedrock",
 } as const;
 
 /** Every distinct env var a model-provider key rides in (the write side's

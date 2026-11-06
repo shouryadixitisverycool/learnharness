@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { AUTH_FILE } from "../../config.ts";
 import type { AuthStore } from "../core/ports.ts";
-import { CUSTOM_PROVIDER } from "../core/auth-keys.ts";
+import { BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import { CUSTOM_AUTH_BINDING, parseCustomAuthBinding, type CustomAuthBinding } from "../core/custom-provider-auth.ts";
 import { writeFileAtomicSync } from "./atomic-write.ts";
 
@@ -81,6 +81,7 @@ function readCustomMap(): Record<string, unknown> {
 }
 function assertOrdinaryVar(name: string): void {
 	if (name === CUSTOM_AUTH_BINDING || name === CUSTOM_PROVIDER.envVar) throw new Error("Use the custom endpoint editor");
+	if (name === BEDROCK_PROVIDER.envVar) throw new Error("Use the Amazon Bedrock editor");
 }
 /** One immutable file snapshot. Keyless callers never invoke fileKey(). */
 export function readCustomAuth() {
@@ -95,5 +96,22 @@ export function writeCustomAuth(binding: CustomAuthBinding | undefined, fileKey:
 	else Object.defineProperty(map, CUSTOM_PROVIDER.envVar, { value: fileKey, enumerable: true, configurable: true, writable: true });
 	if (binding === undefined) delete map[CUSTOM_AUTH_BINDING];
 	else Object.defineProperty(map, CUSTOM_AUTH_BINDING, { value: JSON.stringify(binding), enumerable: true, configurable: true, writable: true });
+	writeMap(map);
+}
+
+/** The Bedrock key from the file (strict read: an unreadable file throws
+ * instead of looking like "no key"). Undefined when absent. */
+export function readBedrockFileKey(): string | undefined {
+	const value = readCustomMap()[BEDROCK_PROVIDER.envVar];
+	if (value === undefined) return undefined;
+	if (typeof value !== "string") throw new Error("Invalid Bedrock credential record");
+	return value;
+}
+/** Set (string) or remove (undefined) the Bedrock key in one atomic write.
+ * Never reflected into process.env; server/bedrock-provider.ts reads it. */
+export function writeBedrockFileKey(key: string | undefined): void {
+	const map = readCustomMap();
+	if (key === undefined) delete map[BEDROCK_PROVIDER.envVar];
+	else map[BEDROCK_PROVIDER.envVar] = key;
 	writeMap(map);
 }

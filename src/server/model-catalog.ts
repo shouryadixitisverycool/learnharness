@@ -21,6 +21,7 @@ import { clampThinkingLevel, getSupportedThinkingLevels, type Api, type Model } 
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { piModels } from "../agent/models.ts";
 import { customProviderAvailable } from "./custom-provider.ts";
+import { bedrockPriceUnknown, bedrockProviderAvailable } from "./bedrock-provider.ts";
 import { chatGPTConnected, chatGPTModel, chatGPTModels, refreshChatGPTModels } from "../agent/chatgpt-bridge.ts";
 import { NATIVE_SUBSCRIPTIONS } from "../core/contracts/subscriptions.ts";
 import { nativeSubscriptionId, nativeSubscriptionConnected, nativeSubscriptionModel, nativeSubscriptionModels, refreshSubscriptionModels } from "../agent/subscription-bridge.ts";
@@ -50,7 +51,7 @@ import type {
 	SlotPins,
 } from "../core/contracts/models.ts";
 import type { EffectiveModelSpec, EffectiveSlot } from "../core/settings-resolution.ts";
-import { AUTH_PROVIDER_KEYS, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
+import { AUTH_PROVIDER_KEYS, BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import { claudeCodeAvailable } from "./claude-code-config.ts";
 import { CLAUDE_CODE_PROVIDER } from "../agent/claude-code/constants.ts";
 import { cursorAvailable } from "./cursor-config.ts";
@@ -59,6 +60,7 @@ import { isCliProvider } from "../core/contracts/cursor.ts";
 import {
 	BACKGROUND_MODEL_ROLES,
 	MODEL_SLOTS,
+	bedrockProviderConfigured,
 	customProviderUsable,
 	type BackgroundModelRole,
 	type ModelSlotName,
@@ -201,6 +203,11 @@ export function catalogProviders(): CatalogProvider[] {
 		...(customProviderUsable(effectiveSettings().customProvider)
 			? [{ id: CUSTOM_PROVIDER.id, envVar: CUSTOM_PROVIDER.envVar, keyPresent: customProviderAvailable() }]
 			: []),
+		// Amazon Bedrock: a row once a region is saved; keyPresent = the
+		// discovered provider is registered (key present, models found).
+		...(bedrockProviderConfigured(settingsStore.readSettings()?.bedrockProvider ?? undefined)
+			? [{ id: BEDROCK_PROVIDER.id, envVar: BEDROCK_PROVIDER.envVar, keyPresent: bedrockProviderAvailable() }]
+			: []),
 	]).sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -220,7 +227,7 @@ export function toModelDto(model: Model<Api>): ModelDto {
 		reasoning: model.reasoning,
 		input: [...model.input],
 		supportedLevels: getSupportedThinkingLevels(model),
-		cost: isCliProvider(model.provider) || model.provider === CUSTOM_PROVIDER.id ? null : {
+		cost: isCliProvider(model.provider) || model.provider === CUSTOM_PROVIDER.id || (model.provider === BEDROCK_PROVIDER.id && bedrockPriceUnknown(model.id)) ? null : {
 			input: model.cost.input,
 			output: model.cost.output,
 			cacheRead: model.cost.cacheRead,
