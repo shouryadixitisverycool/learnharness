@@ -44,6 +44,7 @@ import {
 	type LhMessage,
 	type LhMarkerMessage,
 } from "../core/index.ts";
+import { deriveChat } from "../core/chat-derive.ts";
 import { emit } from "../core/events.ts";
 import type { ChatStore } from "../core/ports.ts";
 import type { PiEngine } from "../agent/models.ts";
@@ -162,9 +163,29 @@ export function effectiveThresholdTokens(settingTokens: number | undefined, cont
  *  CUT-HONORED projection (never the dropped span) plus the additive
  *  prompt term the anchor would have covered. */
 export function projectedContextTokens(messages: readonly LhMessage[], systemPromptTokens: number): number {
+	return withSystemPrompt(contextProjection(messages), systemPromptTokens);
+}
+
+/** The part of the projection that depends on the messages alone: the
+ *  usage-anchored estimate, or (no anchor) the plain heuristic that still
+ *  needs the prompt term added. */
+type ContextProjection = { anchored: number } | { heuristic: number };
+
+function contextProjection(messages: readonly LhMessage[]): ContextProjection {
 	const est = estimateContextTokens(messages);
-	if (est.lastUsageIndex !== null) return est.tokens;
-	return estimateTokens(toLlmMessages(messages as readonly AgentMessage[]) as unknown as readonly LhMessage[]) + systemPromptTokens;
+	if (est.lastUsageIndex !== null) return { anchored: est.tokens };
+	return { heuristic: estimateTokens(toLlmMessages(messages as readonly AgentMessage[]) as unknown as readonly LhMessage[]) };
+}
+
+function withSystemPrompt(projection: ContextProjection, systemPromptTokens: number): number {
+	return "anchored" in projection ? projection.anchored : projection.heuristic + systemPromptTokens;
+}
+
+/** The gate checks' projection of the record on disk, remembered per file
+ *  version (ChatStore.derive); null when the chat is gone. */
+function projectedRecordTokens(chatStore: ChatStore, chatId: string, systemPromptTokens: number): number | null {
+	const projection = deriveChat(chatStore, chatId, "context-projection", (record) => contextProjection(record.messages));
+	return projection === null ? null : withSystemPrompt(projection, systemPromptTokens);
 }
 
 // ─── the compaction run ─────────────────────────────────────────────────────
@@ -284,9 +305,9 @@ export async function ensureCompacted(deps: CompactionDeps, chatId: string): Pro
 	if (process.env.NODE_ENV === "test" && !deps.summarize) return;
 	await awaitCompaction(chatId);
 	if (deps.canStart?.() === false) return;
-	const record = deps.chatStore.getChat(chatId);
-	if (!record) return;
-	if (projectedContextTokens(record.messages, deps.systemPromptTokens) <= deps.thresholdTokens) return;
+	const projected = projectedRecordTokens(deps.chatStore, chatId, deps.systemPromptTokens);
+	if (projected === null) return;
+	if (projected <= deps.thresholdTokens) return;
 	if (state().inFlight.has(chatId)) return; // a concurrent caller started it while we awaited
 	const run = compact(deps, chatId);
 	state().inFlight.set(chatId, run);
@@ -309,9 +330,9 @@ export function kickCompaction(buildDeps: () => CompactionDeps | null, chatId: s
 	if (state().inFlight.has(chatId)) return;
 	const deps = buildDeps();
 	if (!deps || deps.canStart?.() === false) return;
-	const record = deps.chatStore.getChat(chatId);
-	if (!record) return;
-	if (projectedContextTokens(record.messages, deps.systemPromptTokens) <= deps.thresholdTokens) return;
+	const projected = projectedRecordTokens(deps.chatStore, chatId, deps.systemPromptTokens);
+	if (projected === null) return;
+	if (projected <= deps.thresholdTokens) return;
 	const run = compact(deps, chatId);
 	state().inFlight.set(chatId, run);
 	void run.finally(() => state().inFlight.delete(chatId));

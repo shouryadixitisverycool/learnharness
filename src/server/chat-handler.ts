@@ -54,6 +54,7 @@ import { sessionAttachments } from "./attachments.ts";
 import { ensureCompacted, kickCompaction, effectiveThresholdTokens } from "./compaction.ts";
 import { catalogContextLimits, refreshConnectionCatalog } from "./model-catalog.ts";
 import { emit } from "../core/events.ts";
+import { deriveChat } from "../core/chat-derive.ts";
 import { settledTurnResponse } from "./turn-runs.ts";
 import { asAgentMessages } from "../core/native-messages.ts";
 import {
@@ -87,7 +88,7 @@ import type { CallUsage, ChatRecord } from "../core/contracts.ts";
  */
 
 /** The compaction estimate's system-prompt share: doctrine + attachments manifest. */
-function systemPromptTokens(record: ChatRecord): number {
+function systemPromptTokens(record: Pick<ChatRecord, "kind" | "attachments">): number {
 	const kind = record.kind === "practice" ? "practice" : "teacher";
 	return Math.ceil(systemPromptFor(kind, { attachments: sessionAttachments(record) }).length / 4);
 }
@@ -681,19 +682,28 @@ export async function handleChatInput(
 				if (process.env.NODE_ENV !== "test" && (!requestCycle || requestCycle.dispatched))
 					kickCompaction(() => {
 						const fresh = effectiveSettings();
-						const spec = resolveConversationSpec(stores.chatStore.getChat(chatId)?.settings, fresh.models.strong);
+						// The record fields this needs, remembered per file version
+						// (ChatStore.derive): the turn just persisted it, and the
+						// extraction trigger above already parsed that version.
+						const kickInputs = (record: Readonly<ChatRecord>) => ({
+							settings: record.settings,
+							kind: record.kind,
+							attachments: record.attachments,
+							probeDone: hasProbeDone(record.messages),
+						});
+						const spec = resolveConversationSpec(deriveChat(stores.chatStore, chatId, "compaction-kick", kickInputs)?.settings, fresh.models.strong);
 						if (!spec || !connectionBackgroundAllowed(spec.provider)) return null;
 						let kickEngine: PiEngine;
 						try { kickEngine = piEngineForSpec(spec, true, undefined, retentionForSlot("strong")); } catch { return null; }
 						const kickModelId = `${kickEngine.model.provider}:${kickEngine.model.id}`;
-						const freshRecord = stores.chatStore.getChat(chatId);
+						const freshRecord = deriveChat(stores.chatStore, chatId, "compaction-kick", kickInputs);
 						if (!freshRecord) return null;
 						return {
 							chatStore: stores.chatStore,
 							engine: kickEngine,
 							canStart: () => connectionBackgroundAllowed(spec.provider),
 							modelId: kickModelId,
-							kind: freshRecord.kind === "practice" ? "practice" : hasProbeDone(freshRecord.messages) ? "teach" : "probe",
+							kind: freshRecord.kind === "practice" ? "practice" : freshRecord.probeDone ? "teach" : "probe",
 							thresholdTokens: effectiveThresholdTokens(
 								fresh.compaction?.thresholdTokens,
 								catalogContextLimits().get(kickModelId),
