@@ -53,41 +53,38 @@ export default function RoutePrewarm() {
 		const run = () => {
 			void prewarmChatTranscript();
 		};
-		const idle = () => {
-			const w = window as IdleWindow;
-			if (w.requestIdleCallback) w.requestIdleCallback(run, { timeout: 1500 });
-			else setTimeout(run, 500);
-		};
 
-		// Gate on LCP so the eval can never delay the host page's own paint
-		// metrics. Entries keep arriving while bigger paints land; start once
-		// they go quiet. Hard fallback keeps the prewarm from being lost on
-		// pages where LCP never fires.
-		let lastEntry = 0;
-		let sawEntry = false;
+		// Gate on the FIRST LCP entry + 600 ms: the page's own paint metrics
+		// are settled by then (a canvas can keep emitting bigger LCP
+		// candidates for seconds — waiting for quiet never fires), and the
+		// margin keeps the eval clear of a late final LCP paint on cold
+		// loads. Fallback keeps the prewarm if LCP never fires.
+		let lcpAt = 0;
 		try {
 			const observer = new PerformanceObserver((list) => {
-				if (list.getEntries().length > 0) {
-					sawEntry = true;
-					lastEntry = performance.now();
-				}
+				for (const entry of list.getEntries()) lcpAt = entry.startTime;
 			});
 			observer.observe({ type: "largest-contentful-paint", buffered: true });
-			setTimeout(() => observer.disconnect(), 10000);
+			setTimeout(() => observer.disconnect(), 5000);
 		} catch {
-			sawEntry = true; // no LCP support: fall through to the timed checks
+			// No LCP support: lcpAt stays 0 and the fallback timer governs.
 		}
-		const started = performance.now();
-		const tick = () => {
-			const now = performance.now();
-			if ((sawEntry && now - lastEntry > 250) || now - started > 8000) {
-				if (document.readyState === "complete") idle();
-				else window.addEventListener("load", idle, { once: true });
-				return;
-			}
-			setTimeout(tick, 250);
+		const start = () => {
+			const t0 = performance.now();
+			const tick = () => {
+				const now = performance.now();
+				if ((lcpAt > 0 && now >= lcpAt + 600) || now - t0 > 2500) {
+					const w = window as IdleWindow;
+					if (w.requestIdleCallback) w.requestIdleCallback(run, { timeout: 500 });
+					else run();
+					return;
+				}
+				setTimeout(tick, 100);
+			};
+			tick();
 		};
-		tick();
+		if (document.readyState === "complete") start();
+		else window.addEventListener("load", start, { once: true });
 	}, [pathname]);
 	return null;
 }
