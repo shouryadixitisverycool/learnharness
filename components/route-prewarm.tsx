@@ -31,6 +31,11 @@ async function prewarmChatTranscript(): Promise<void> {
 		// same plugin caches the chat route uses.
 		const codePluginReady = import("@streamdown/code");
 		const messageReady = import("@/components/ai-elements/message");
+		// The chat route's own client module (components/chat and the rest
+		// of its graph: composer, question dock, plan chips). Turbopack emits
+		// it as the same chunk files the /chat/[id] page entry lists, so once
+		// this import resolves a home -> chat navigation fetches no route JS.
+		const chatReady = import("@/components/chat");
 		const { code } = (await codePluginReady) as { code?: CodePlugin };
 		// The plugin caches one highlighter per (language, themes); warming it
 		// here moves the shiki engine + grammar init off the first chat paint.
@@ -46,7 +51,7 @@ async function prewarmChatTranscript(): Promise<void> {
 				// Highlighter not ready to accept work — the import alone still pays off.
 			}
 		}
-		await messageReady;
+		await Promise.all([messageReady, chatReady]);
 	} catch {
 		// Best effort only — a failed prewarm must never break the host page.
 	}
