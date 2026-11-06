@@ -40,6 +40,7 @@ import {
 	type AppearanceSettings,
 	type RenderedMode,
 } from "@/src/core";
+import { getSettingsRecord } from "@/components/settings-record";
 
 /** The resolved, fully-concrete appearance view (delta + factory merged). */
 export function resolveAppearance(delta: AppearanceSettings | undefined) {
@@ -227,23 +228,22 @@ export function AppearanceProvider({
 	}, [recordLoaded, mode, background, lightBackground]);
 
 	// One fetch per app load: the record (sanitized server-side) carries the
-	// delta; resolution happens here against the compiled factory.
+	// delta; resolution happens here against the compiled factory. Shared
+	// through settings-record (perf wave): the other mount-time readers ride
+	// the same flight instead of each firing their own GET /api/settings.
 	useEffect(() => {
 		let alive = true;
-		fetch("/api/settings")
-			.then((r) => r.json())
-			.then((body: { settings?: Record<string, unknown> }) => {
-				if (!alive) return;
-				// The record arrives sanitized server-side; the appearance
-				// slice is unknown-shaped here, so it goes through the same
-				// resolve (absent/invalid fields = factory anyway).
-				const appearance = body.settings?.appearance;
-				setDelta(
-					appearance && typeof appearance === "object" ? (appearance as AppearanceSettings) : undefined,
-				);
-				setRecordLoaded(true);
-			})
-			.catch(() => {/* settings stay factory — not worth a crash */});
+		getSettingsRecord().then((body) => {
+			if (!alive || !body) return;
+			// The record arrives sanitized server-side; the appearance
+			// slice is unknown-shaped here, so it goes through the same
+			// resolve (absent/invalid fields = factory anyway).
+			const appearance = body.settings?.appearance;
+			setDelta(
+				appearance && typeof appearance === "object" ? (appearance as AppearanceSettings) : undefined,
+			);
+			setRecordLoaded(true);
+		});
 		return () => {
 			alive = false;
 		};

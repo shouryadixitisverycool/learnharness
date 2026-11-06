@@ -8,6 +8,7 @@ import { SetupDialog } from "../components/setup-dialog.tsx";
 import { AgentSection } from "../components/settings/agent-section.tsx";
 import { providerKeyLabel, classifyKeys } from "../components/settings/keys-section.tsx";
 import { useModelCatalog } from "../components/model-catalog.ts";
+import { resetSettingsRecordForTest } from "../components/settings-record.ts";
 import { notifySettingsSaved } from "../components/settings-signal.ts";
 import { useModelSetup, savedSlotsConfigured, selectedModelUnavailable, openModelPicker } from "../components/setup-cta.tsx";
 import { StatsBar } from "../components/stats-bar.tsx";
@@ -45,6 +46,10 @@ function Reader() { snapshot = useModelCatalog(); return null; }
 function setup(onClose = () => {}, onDone = (_models: ModelsSettings) => {}) { return <SetupDialog open onClose={onClose} onDone={onDone} />; }
 function installFetch() {
 	requests = []; writes = [];
+	// ModelControl reads /api/settings through the shared page-lifetime
+	// flight (settings-record.ts); each test here is its own "page" with a
+	// fresh stub, so the cache must not leak across tests.
+	resetSettingsRecordForTest();
 	globalThis.fetch = async (input, init) => {
 		const path = String(input);
 		if (path === "/api/models") { const request = deferred<Response>(); requests.push(request); return request.promise; }
