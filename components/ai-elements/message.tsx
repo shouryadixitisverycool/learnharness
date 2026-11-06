@@ -346,13 +346,23 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 // `code` override intercepts mermaid fences and renders via
 // components/mermaid-render.ts — streamdown's internal mermaid machinery
 // (the plugin entry + the `mermaid` prop) is retired with it.
+// KaTeX strict defaults to "warn" (rehype-katex): a console.warn for every
+// LaTeX-incompatible glyph (a Unicode prime, …) on EVERY render — on the
+// server's SSR path each warning is a synchronous log write. strict:false
+// renders byte-identical output; the flag only gates the diagnostics.
+const mathPlugin = createMathPlugin({ singleDollarTextMath: true });
+const mathRehype = mathPlugin.rehypePlugin as [unknown, Record<string, unknown>];
+
 export const streamdownPlugins = {
   cjk: {
     ...cjk,
     remarkPluginsAfter: [...cjk.remarkPluginsAfter, remarkBreaks],
   },
   code,
-  math: createMathPlugin({ singleDollarTextMath: true }),
+  math: {
+    ...mathPlugin,
+    rehypePlugin: [mathRehype[0], { ...mathRehype[1], strict: false }],
+  },
 } as unknown as PluginConfig;
 
 // KaTeX's hidden MathML otherwise lands in copied text; copy-tex copies each
