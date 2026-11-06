@@ -7,6 +7,7 @@
  */
 
 import { useState } from "react";
+import { BEDROCK_REGIONS } from "@/src/core";
 
 const OTHER = "__other";
 const API_KEY_DOCS = "https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys.html";
@@ -17,14 +18,13 @@ export interface BedrockStatus {
 	models: { id: string; name: string; accessConfirmed: boolean }[];
 	keyPresent: boolean;
 	keySource: "env" | "file" | "none";
-	regions: string[];
 }
 
 export async function readBedrockStatus(): Promise<BedrockStatus> {
 	const response = await fetch("/api/bedrock-provider");
 	if (!response.ok) throw new Error("Unable to load the Bedrock configuration.");
 	const b = await response.json() as Partial<BedrockStatus>;
-	return { region: b.region ?? "", models: b.models ?? [], keyPresent: Boolean(b.keyPresent), keySource: b.keySource ?? "none", regions: b.regions ?? [] };
+	return { region: b.region ?? "", models: b.models ?? [], keyPresent: Boolean(b.keyPresent), keySource: b.keySource ?? "none" };
 }
 
 /** "eu-north-1 · 48 models" (" · key missing" when the key is gone). Pure. */
@@ -62,7 +62,9 @@ async function post(body: Record<string, unknown>, method = "POST"): Promise<str
 }
 
 export function BedrockEditor({ status, onSaved, onCancel }: { status: BedrockStatus | null; onSaved: () => void | Promise<void>; onCancel: () => void }) {
-	const regions = status?.regions ?? [];
+	// The compiled list, not the status payload: the editor can open before
+	// the status fetch answers.
+	const regions = BEDROCK_REGIONS;
 	const region0 = status?.region ?? "";
 	const configured = Boolean(region0);
 	const [choice, setChoice] = useState(region0 && !regions.includes(region0) ? OTHER : region0);

@@ -1,7 +1,7 @@
 /** GET/POST/DELETE /api/bedrock-provider: Amazon Bedrock's status, save
  * (or refresh) and removal. No key characters ever reach a response. */
 import { BEDROCK_PROVIDER, genericProviderKeyGuard } from "../core/auth-keys.ts";
-import { BEDROCK_REGIONS, normalizeBedrockRegion, type BedrockProviderSettings } from "../core/settings.ts";
+import { normalizeBedrockRegion, type BedrockProviderSettings } from "../core/settings.ts";
 import { readBedrockFileKey, writeBedrockFileKey } from "../store/auth.ts";
 import { readSettings, writeSettings } from "../store/settings.ts";
 import { bedrockAuthState, bedrockModelRows, discoverBedrockModels } from "./bedrock-provider.ts";
@@ -20,7 +20,6 @@ export function bedrockStatus() {
 		models: bedrockModelRows(bp),
 		keyPresent: Boolean(auth.key),
 		keySource: auth.source,
-		regions: BEDROCK_REGIONS,
 	};
 }
 
