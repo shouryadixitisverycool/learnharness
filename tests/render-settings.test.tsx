@@ -17,8 +17,7 @@ import { AppearanceSection, GraphSection } from "../components/settings/appearan
 import { KeysSection } from "../components/settings/keys-section.tsx";
 import { KeyboardSection } from "../components/settings/keyboard-section.tsx";
 import type { GraphSettings } from "../src/core/index.ts";
-import { SettingsDialogProvider } from "../components/settings/settings-dialog.tsx";
-import { SettingsDialogBody } from "../components/settings/settings-dialog-body.tsx";
+import { SettingsDialogBody, SettingsDialogProvider } from "../components/settings/settings-dialog.tsx";
 import { KEYBOARD_ACTIONS } from "../src/core/index.ts";
 import { DictationLanguageSetting } from "../components/dictation-language.tsx";
 import { SettingsMenuTrigger } from "../components/settings/controls.tsx";
