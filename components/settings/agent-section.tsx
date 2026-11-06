@@ -78,6 +78,7 @@ import { prettyModel } from "@/components/usage-format";
 import { cn } from "@/lib/utils";
 import { SettingsGroup, SettingsRow, SettingsMenuTrigger, Toggle, CommitInput } from "./controls.tsx";
 import { ModelMenuList, ThinkingMenuList } from "./model-menu";
+import { composeSlotModel } from "./slot-model.ts";
 import { ChatGPTBackgroundAccess } from "./chatgpt-connection";
 import { NativeSubscriptionBackgroundAccess } from "./subscription-connections";
 
@@ -154,30 +155,10 @@ export function composeGraphTools(agent: AgentSettings | undefined, on: boolean)
 	return { ...agent, graphTools: { enabled: on } };
 }
 
-/** Compose: one slot's model/thinking override. Empty model = absent
- *  override (Default — falls to the factory pin); empty thinking = the
- *  tier keeps its resolved thinking budget. Per-field independence, same
- *  as the schema's ModelSlot. Pure — exported for tests. */
-export function composeSlotModel(
-	models: ModelsSettings | undefined,
-	slot: ModelSlotName,
-	provider: string,
-	id: string,
-	thinking: string,
-): ModelsSettings {
-	const prev = models?.[slot];
-	const next = { ...models };
-	if (!provider && !id && !thinking) {
-		delete next[slot];
-		return next;
-	}
-	next[slot] = {
-		...(prev?.cacheRetention !== undefined ? { cacheRetention: prev.cacheRetention } : {}),
-		...(provider && id ? { model: { provider, id } } : prev?.model ? { model: prev.model } : {}),
-		...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
-	};
-	return next;
-}
+/* composeSlotModel lives in slot-model.ts (perf split, 2026-11-06): the
+ * composer's model picker needs it without pulling this whole section
+ * into the first-paint bundle. Re-exported here for existing importers. */
+export { composeSlotModel };
 
 /** Retention is slot-only; selecting Pi default removes the field entirely. */
 export function composeSlotCacheRetention(models: ModelsSettings | undefined, slot: ModelSlotName, value: CacheRetention | undefined): ModelsSettings {
