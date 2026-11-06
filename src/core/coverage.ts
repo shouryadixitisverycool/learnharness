@@ -19,9 +19,8 @@
  * together.)
  */
 
-import { createHash } from "node:crypto";
-
 import type { CoverageEntry } from "./contracts/graph.ts";
+import { sha256Hex, Sha256 } from "./sha256.ts";
 import { failedOutputCallIds, userFacingTextOf, type LhMessage } from "./native-messages.ts";
 
 export type { CoverageEntry };
@@ -75,9 +74,7 @@ export function viewTokens(lines: string[]): number {
  * the teacher prose of the message changes — nothing else can re-open it.
  */
 export function messageFingerprint(message: LhMessage, failedOutputCalls?: ReadonlySet<string>): string {
-	const h = createHash("sha256");
-	h.update(JSON.stringify([(message as { role?: string }).role, messageViewLines(message, message.id, failedOutputCalls)]));
-	return h.digest("hex");
+	return sha256Hex(JSON.stringify([(message as { role?: string }).role, messageViewLines(message, message.id, failedOutputCalls)]));
 }
 
 /** One message's coverage-relevant projection. */
@@ -186,7 +183,7 @@ export function batchRuns(slots: ReadonlyArray<CoverageSlot>, uncovered: Readonl
  * their positions shift between runs.
  */
 export function batchTag(batch: ReadonlyArray<CoverageSlot>): string {
-	const h = createHash("sha256");
+	const h = new Sha256();
 	for (const slot of batch) h.update(slot.fp);
 	return h.digest("hex").slice(0, 12);
 }

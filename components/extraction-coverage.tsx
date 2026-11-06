@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useActivity } from "@/components/activity-dock";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
 import { useSettingsSaved } from "@/components/settings-signal";
+import { getSettingsRecord } from "@/components/settings-record";
 import { formatTokens } from "@/components/usage-format";
 import { Hint } from "@/components/ui/hint";
 import { timeAgo } from "@/components/sidebar";
@@ -69,15 +70,12 @@ export interface GraphRead {
 /** Exported for the render pin (the ringFill precedent): resolves the
  *  raw settings delta to the factory-true graph section. */
 export async function fetchGraphRead(): Promise<GraphRead | null> {
-	try {
-		const res = await fetch("/api/settings");
-		if (!res.ok) return null;
-		const body = (await res.json()) as { settings?: Parameters<typeof resolveSettings>[0] };
-		const graph = resolveSettings(body.settings ?? null).graph;
-		return { enabled: graph.enabled, chunkTokens: graph.extractionChunkTokens };
-	} catch {
-		return null;
-	}
+	// Shared flight (perf wave): one GET /api/settings serves every
+	// mount-time reader; null on failure keeps the honest-render posture.
+	const body = await getSettingsRecord();
+	if (!body) return null;
+	const graph = resolveSettings(body.settings ?? null).graph;
+	return { enabled: graph.enabled, chunkTokens: graph.extractionChunkTokens };
 }
 
 /** The manual-extract seam, shared by both surfaces. 409 is BENIGN (the

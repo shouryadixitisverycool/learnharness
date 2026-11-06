@@ -97,5 +97,6 @@
 		"tailwindcss": "^4.3.3",
 		"tsx": "^4.19.0",
 		"typescript": "^5.6.0"
-	}
+	},
+	"sideEffects": false
 }
