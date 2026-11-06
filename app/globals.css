@@ -689,18 +689,6 @@ body {
 	border-radius: 0.25rem;
 }
 
-/* Transcript rows render lazily OFF-screen (perf round 1): every direct
-   child of the session column keeps its DOM node — browser Find, session
-   Find ranges, text selection and hash anchors all keep working, and
-   Chromium reveals skipped subtrees on demand — but style/layout/paint
-   run only near the viewport. `auto` in contain-intrinsic-size remembers
-   the real height once a row has rendered, so only never-seen rows use
-   the 300px estimate (close to a prose message's median height). */
-[data-session-find-root] > * {
-	content-visibility: auto;
-	contain-intrinsic-height: auto 300px;
-}
-
 /* ─── iPhone app (ios/) ───────────────────────────────────────────────────
    <html class="lh-ios"> is set only inside the iPhone app (its User-Agent
    token, components/sidebar.tsx). The sidebar slides over the page instead
