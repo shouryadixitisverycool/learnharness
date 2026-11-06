@@ -65,11 +65,12 @@ export default function RoutePrewarm() {
 			void prewarmChatTranscript();
 		};
 
-		// Gate on the FIRST LCP entry + 600 ms: the page's own paint metrics
+		// Gate on the FIRST LCP entry + 250 ms: the page's own paint metrics
 		// are settled by then (a canvas can keep emitting bigger LCP
-		// candidates for seconds — waiting for quiet never fires), and the
-		// margin keeps the eval clear of a late final LCP paint on cold
-		// loads. Fallback keeps the prewarm if LCP never fires.
+		// candidates for seconds — waiting for quiet never fires). The
+		// margin is short on purpose: the warm-up is ~2 s of fetch+eval and
+		// must be done before the user reaches for a session row. Fallback
+		// keeps the prewarm if LCP never fires.
 		let lcpAt = 0;
 		try {
 			const observer = new PerformanceObserver((list) => {
@@ -84,9 +85,9 @@ export default function RoutePrewarm() {
 			const t0 = performance.now();
 			const tick = () => {
 				const now = performance.now();
-				if ((lcpAt > 0 && now >= lcpAt + 600) || now - t0 > 2500) {
+				if ((lcpAt > 0 && now >= lcpAt + 250) || now - t0 > 2500) {
 					const w = window as IdleWindow;
-					if (w.requestIdleCallback) w.requestIdleCallback(run, { timeout: 500 });
+					if (w.requestIdleCallback) w.requestIdleCallback(run, { timeout: 250 });
 					else run();
 					return;
 				}
