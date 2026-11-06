@@ -34,7 +34,6 @@ export async function refreshConnectionCatalog(provider?: string): Promise<void>
 }
 function connectionModel(provider: string, id: string): Model<Api> | undefined {
 	if (provider === CLAUDE_CODE_PROVIDER && !claudeCodeAvailable()) return undefined;
-	if (provider === CURSOR_PROVIDER && !cursorAvailable()) return undefined;
 	return provider === "chatgpt" ? chatGPTModel(id) : nativeSubscriptionId(provider) ? nativeSubscriptionModel(provider, id) : piModels().getModel(provider, id);
 }
 function connectionProviderIds(): string[] { return [...piModels().getProviders().map((p) => p.id), "chatgpt", ...NATIVE_SUBSCRIPTIONS.map((p) => p.logicalId)]; }
@@ -54,9 +53,6 @@ import type { EffectiveModelSpec, EffectiveSlot } from "../core/settings-resolut
 import { AUTH_PROVIDER_KEYS, BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import { claudeCodeAvailable } from "./claude-code-config.ts";
 import { CLAUDE_CODE_PROVIDER } from "../agent/claude-code/constants.ts";
-import { cursorAvailable } from "./cursor-config.ts";
-import { CURSOR_PROVIDER } from "../agent/cursor/constants.ts";
-import { isCliProvider } from "../core/contracts/cursor.ts";
 import {
 	BACKGROUND_MODEL_ROLES,
 	MODEL_SLOTS,
@@ -161,7 +157,6 @@ export function catalogProviders(): CatalogProvider[] {
 	})).concat([
 		{ id: "chatgpt", envVar: "", keyPresent: chatGPTConnected() },
 		{ id: CLAUDE_CODE_PROVIDER, envVar: "", keyPresent: claudeCodeAvailable() },
-		{ id: CURSOR_PROVIDER, envVar: "", keyPresent: cursorAvailable() },
 		...NATIVE_SUBSCRIPTIONS.map((p) => ({ id: p.logicalId, envVar: "", keyPresent: nativeSubscriptionConnected(p.providerId) })),
 		// The custom endpoint: a row only when usable (base URL set). keyPresent
 		// reflects usability, not key presence (keyless local servers are allowed).
@@ -192,7 +187,7 @@ export function toModelDto(model: Model<Api>): ModelDto {
 		reasoning: model.reasoning,
 		input: [...model.input],
 		supportedLevels: getSupportedThinkingLevels(model),
-		cost: isCliProvider(model.provider) || model.provider === CUSTOM_PROVIDER.id || (model.provider === BEDROCK_PROVIDER.id && bedrockPriceUnknown(model.id)) ? null : {
+		cost: model.provider === CLAUDE_CODE_PROVIDER || model.provider === CUSTOM_PROVIDER.id || (model.provider === BEDROCK_PROVIDER.id && bedrockPriceUnknown(model.id)) ? null : {
 			input: model.cost.input,
 			output: model.cost.output,
 			cacheRead: model.cost.cacheRead,

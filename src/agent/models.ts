@@ -21,8 +21,6 @@ import { chatGPTStream } from "./chatgpt-stream.ts";
 import type { ChatGPTDispatchLifecycle } from "./chatgpt-request-cycle.ts";
 import { createClaudeCodeProvider } from "./claude-code/provider.ts";
 import { streamClaudeCode } from "./claude-code/stream.ts";
-import { createCursorProvider } from "./cursor/provider.ts";
-import { streamCursor } from "./cursor/stream.ts";
 import { nativeSubscriptionId, nativeSubscriptionModel } from "./subscription-bridge.ts";
 import { nativeSubscriptionStream } from "./subscription-stream.ts";
 
@@ -118,7 +116,6 @@ export function piModels() {
 			collection.setProvider(provider.id === "amazon-bedrock" ? nativeBedrock! : provider);
 		}
 		collection.setProvider(createClaudeCodeProvider(streamClaudeCode));
-		collection.setProvider(createCursorProvider(streamCursor));
 	}
 	for (const source of providerSources.values()) source.sync(collection);
 	return collection;
