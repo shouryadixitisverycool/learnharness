@@ -365,63 +365,6 @@ function withClaudeInstalled(installed: boolean, fn: () => void, enabled = true)
 	}
 }
 
-/** Runs fn with LH_CURSOR_AGENT_PATH pointed at a temp file that exists only
- *  when installed is true, and the cursor opt-in set to enabled. */
-function withCursorInstalled(installed: boolean, fn: () => void, enabled = true): void {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cursor-catalog-"));
-	const saved = process.env.LH_CURSOR_AGENT_PATH;
-	const settings = readSettings();
-	writeSettings({ ...(settings ?? { version: 1 }), cursor: { enabled } });
-	const binary = path.join(dir, "cursor-agent");
-	if (installed) fs.writeFileSync(binary, "#!/bin/sh\n", { mode: 0o755 });
-	process.env.LH_CURSOR_AGENT_PATH = binary;
-	try {
-		fn();
-	} finally {
-		if (saved === undefined) delete process.env.LH_CURSOR_AGENT_PATH;
-		else process.env.LH_CURSOR_AGENT_PATH = saved;
-		if (settings) writeSettings(settings);
-		else fs.rmSync(SETTINGS_FILE, { force: true });
-		fs.rmSync(dir, { recursive: true, force: true });
-	}
-}
-
-describe("the cursor provider (the user's Cursor subscription through cursor-agent)", () => {
-	it("modelCatalog() lists Grok 4.7 Fast and Grok 4.7, unpriced, with their 256K window", () => {
-		withCursorInstalled(true, () => {
-			const models = modelCatalog().models.filter((m) => m.provider === "cursor");
-			assert.deepEqual(models.map((m) => [m.id, m.name]).sort(), [["grok-4.7", "Grok 4.7"], ["grok-4.7-fast", "Grok 4.7 Fast"]]);
-			for (const model of models) {
-				assert.equal(model.cost, null);
-				assert.equal(model.contextWindow, 256_000);
-				assert.deepEqual(model.input, ["text"]);
-			}
-			assert.equal(catalogContextLimits().get("cursor:grok-4.7-fast"), 256_000);
-		});
-	});
-
-	it('providerKeyPresent("cursor") requires both explicit opt-in and an executable CLI', () => {
-		withCursorInstalled(true, () => {
-			assert.equal(providerKeyPresent("cursor"), true);
-			assert.deepEqual(catalogProviders().find((p) => p.id === "cursor"), { id: "cursor", envVar: "", keyPresent: true });
-		});
-		withCursorInstalled(false, () => {
-			assert.equal(providerKeyPresent("cursor"), false);
-			assert(!modelCatalog().models.some((m) => m.provider === "cursor"));
-		});
-		withCursorInstalled(true, () => {
-			assert.equal(providerKeyPresent("cursor"), false);
-			assert.equal(validateChatSettings({ model: { provider: "cursor", id: "grok-4.7-fast" } }).ok, false);
-		}, false);
-	});
-
-	it('piEngineForSpec({ provider: "cursor", id: "grok-4.7-fast" }) resolves with the four Cursor efforts', () => {
-		const engine = piEngineForSpec({ provider: "cursor", id: "grok-4.7-fast", thinkingLevel: "max" });
-		assert.equal(engine.model.provider, "cursor");
-		assert.equal(engine.level, "xhigh");
-	});
-});
-
 describe("the claude-code provider (native CLI authentication, no LearnHarness key)", () => {
 	it("modelCatalog() lists claude-code opus/sonnet/haiku when the CLI is installed", () => {
 		withClaudeInstalled(true, () => {

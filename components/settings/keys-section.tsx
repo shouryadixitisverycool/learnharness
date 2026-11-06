@@ -38,7 +38,6 @@ import {
 import { SettingsGroup } from "./controls.tsx";
 import { SubscriptionConnections } from "./subscription-connections.tsx";
 import { ClaudeCodeInstallationStatus } from "./claude-code-status.tsx";
-import { CursorInstallationStatus } from "./cursor-status.tsx";
 import { ProviderMenuList } from "./model-menu.tsx";
 import { BedrockEditor, BedrockRow, readBedrockStatus, type BedrockStatus } from "./bedrock-provider.tsx";
 import { MenuShell } from "@/components/menu-shell";
@@ -612,7 +611,6 @@ export function KeysSection({
 
 			<SettingsGroup label="External CLI" testid="group-external-cli">
 				<ClaudeCodeInstallationStatus />
-				<CursorInstallationStatus />
 			</SettingsGroup>
 
 			{(["Dictation", "Search"] as const).map((label) => <SettingsGroup key={label} label={label} testid={label === "Dictation" ? "group-dictation" : "group-search"}>

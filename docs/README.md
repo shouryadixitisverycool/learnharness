@@ -6,7 +6,7 @@
 - [Keyboard shortcuts](keyboard.md) — defaults, rebinding, and navigation.
 - [Claude Code](claude-code.md) — use an installed CLI and troubleshoot its connection.
 - [Custom and local models](custom-providers.md) — configure an OpenAI-compatible endpoint.
-- [Self-hosting](self-hosting.md) — run one server for every device, with the Cursor provider and backups. See also [Server password](server-password.md) and the [iPhone app](ios.md).
+- [Self-hosting](self-hosting.md) — run one server for every device, with backups. See also [Server password](server-password.md) and the [iPhone app](ios.md).
 - [Context, caching, and costs](compaction-accounting.md) — understand the session meters and advanced cache preferences.
 - [Learning-data skill](../skills/learnharness/SKILL.md) — a read-only guide and standalone readers for local learning records.
 
