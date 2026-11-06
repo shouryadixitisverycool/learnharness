@@ -124,8 +124,24 @@ export function coverageOf(
 	coveredCount: number;
 	uncoveredCount: number;
 } {
-	const covered = coveredSet(entries, chatId);
 	const slots = coverageSlots(messages);
+	return { slots, ...coverageTotals(slots, entries, chatId) };
+}
+
+/** coverageOf without the messages: the same totals from each slot's
+ *  fingerprint and token count alone (what a cached digest keeps). */
+export function coverageTotals(
+	slots: ReadonlyArray<Pick<CoverageSlot, "fp" | "tokens">>,
+	entries: ReadonlyArray<CoverageEntry>,
+	chatId: string,
+): {
+	uncovered: number[];
+	coveredTokens: number;
+	uncoveredTokens: number;
+	coveredCount: number;
+	uncoveredCount: number;
+} {
+	const covered = coveredSet(entries, chatId);
 	const uncovered: number[] = [];
 	let coveredTokens = 0;
 	let uncoveredTokens = 0;
@@ -140,13 +156,18 @@ export function coverageOf(
 	}
 	const visibleCount = slots.filter((s) => s.tokens > 0).length;
 	return {
-		slots,
 		uncovered,
 		coveredTokens,
 		uncoveredTokens,
 		coveredCount: visibleCount - uncovered.length,
 		uncoveredCount: uncovered.length,
 	};
+}
+
+/** Each slot's fingerprint and token count, without the message: the
+ *  part of coverage that is a pure function of the record. */
+export function coverageFingerprints(messages: ReadonlyArray<LhMessage>): Array<Pick<CoverageSlot, "fp" | "tokens">> {
+	return coverageSlots(messages).map(({ fp, tokens }) => ({ fp, tokens }));
 }
 
 /**
