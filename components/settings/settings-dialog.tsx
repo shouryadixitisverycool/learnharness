@@ -24,7 +24,7 @@
  * shell — it stays in the every-route bundle because the sidebar, the
  * mod+, chord and the native bridges need the context. The dialog BODY
  * (every section) lives in settings-dialog-body.tsx behind a dynamic
- * import, prewarmed right after mount, so first paint never pays for it
+ * import, prewarmed at module eval, so first paint never pays for it
  * and opening the dialog does not wait on the network in practice.
  */
 
@@ -51,6 +51,12 @@ const LazySettingsDialog = lazy(() =>
 	import("./settings-dialog-body.tsx").then((m) => ({ default: m.SettingsDialog })),
 );
 
+// Prewarm the dialog body chunk at MODULE EVAL (browser only): the fetch
+// races the rest of first paint, so by the time anyone opens Settings —
+// including the /settings redirect opening it during load — the code is
+// already here and the lazy boundary never shows its fallback.
+if (typeof window !== "undefined") void import("./settings-dialog-body.tsx");
+
 /** `open(section?, row?)` — the optional ROW deep-links into the Keys
  *  section with that row unfolded (zero-keys wave: the dictation error's
  *  click lands on the Deepgram row). `row` is the KEY ID (the env-var
@@ -73,12 +79,6 @@ export function SettingsDialogProvider({
 		setLandOn(section ? section as SectionId : "keys");
 		setLandOnRow(row ?? null);
 		setShow(true);
-	}, []);
-	// Prewarm the dialog body chunk right after mount: by the time anyone
-	// opens Settings the code is already here, so the lazy boundary is
-	// invisible (the fallback never renders in practice).
-	useEffect(() => {
-		void import("./settings-dialog-body.tsx");
 	}, []);
 	useEffect(() => window.lh?.onOpenSettings?.((section) => open(section)), [open]);
 	// The iPhone app's Settings tab opens a section directly (native-shell.ts);
