@@ -19,9 +19,8 @@
  * together.)
  */
 
-import { createHash } from "node:crypto";
-
 import type { CoverageEntry } from "./contracts/graph.ts";
+import { sha256Hex, Sha256 } from "./sha256.ts";
 import { failedOutputCallIds, userFacingTextOf, type LhMessage } from "./native-messages.ts";
 
 export type { CoverageEntry };
@@ -75,9 +74,7 @@ export function viewTokens(lines: string[]): number {
  * the teacher prose of the message changes — nothing else can re-open it.
  */
 export function messageFingerprint(message: LhMessage, failedOutputCalls?: ReadonlySet<string>): string {
-	const h = createHash("sha256");
-	h.update(JSON.stringify([(message as { role?: string }).role, messageViewLines(message, message.id, failedOutputCalls)]));
-	return h.digest("hex");
+	return sha256Hex(JSON.stringify([(message as { role?: string }).role, messageViewLines(message, message.id, failedOutputCalls)]));
 }
 
 /** One message's coverage-relevant projection. */
@@ -124,8 +121,24 @@ export function coverageOf(
 	coveredCount: number;
 	uncoveredCount: number;
 } {
-	const covered = coveredSet(entries, chatId);
 	const slots = coverageSlots(messages);
+	return { slots, ...coverageTotals(slots, entries, chatId) };
+}
+
+/** coverageOf without the messages: the same totals from each slot's
+ *  fingerprint and token count alone (what a cached digest keeps). */
+export function coverageTotals(
+	slots: ReadonlyArray<Pick<CoverageSlot, "fp" | "tokens">>,
+	entries: ReadonlyArray<CoverageEntry>,
+	chatId: string,
+): {
+	uncovered: number[];
+	coveredTokens: number;
+	uncoveredTokens: number;
+	coveredCount: number;
+	uncoveredCount: number;
+} {
+	const covered = coveredSet(entries, chatId);
 	const uncovered: number[] = [];
 	let coveredTokens = 0;
 	let uncoveredTokens = 0;
@@ -140,13 +153,18 @@ export function coverageOf(
 	}
 	const visibleCount = slots.filter((s) => s.tokens > 0).length;
 	return {
-		slots,
 		uncovered,
 		coveredTokens,
 		uncoveredTokens,
 		coveredCount: visibleCount - uncovered.length,
 		uncoveredCount: uncovered.length,
 	};
+}
+
+/** Each slot's fingerprint and token count, without the message: the
+ *  part of coverage that is a pure function of the record. */
+export function coverageFingerprints(messages: ReadonlyArray<LhMessage>): Array<Pick<CoverageSlot, "fp" | "tokens">> {
+	return coverageSlots(messages).map(({ fp, tokens }) => ({ fp, tokens }));
 }
 
 /**
@@ -186,7 +204,7 @@ export function batchRuns(slots: ReadonlyArray<CoverageSlot>, uncovered: Readonl
  * their positions shift between runs.
  */
 export function batchTag(batch: ReadonlyArray<CoverageSlot>): string {
-	const h = createHash("sha256");
+	const h = new Sha256();
 	for (const slot of batch) h.update(slot.fp);
 	return h.digest("hex").slice(0, 12);
 }

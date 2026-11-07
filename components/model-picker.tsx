@@ -5,10 +5,11 @@ import type { ChatSettings, ModelCatalogEntry, ModelCatalogResponse, ModelsSetti
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { prettyModel } from "@/components/usage-format";
 import { ModelMenuList, ThinkingMenuList } from "@/components/settings/model-menu";
-import { composeSlotModel } from "@/components/settings/agent-section";
+import { composeSlotModel } from "@/components/settings/slot-model";
 import { MenuShell } from "@/components/menu-shell";
 import { Hint } from "@/components/ui/hint";
 import { notifySettingsSaved, useSettingsSaved } from "@/components/settings-signal";
+import { getSettingsRecord } from "@/components/settings-record";
 import { useModelCatalog } from "@/components/model-catalog";
 export { useModelCatalog } from "@/components/model-catalog";
 import { defaultOrderLevel, populateLevel, THINKING_LABEL } from "@/components/thinking-default";
@@ -56,21 +57,24 @@ export function ModelControl({ chatId, onModelChange }: { chatId?: string; onMod
 	// reads the models section alone.
 	const readRecord = useCallback(() => {
 		if (chatId) {
-			fetch(`/api/chats/${chatId}`)
+			// Slim read (only=settings): the pill needs the session's model
+			// stamp, not the transcript — the full record re-sends every
+			// message on a long session.
+			fetch(`/api/chats/${chatId}?only=settings`)
 				.then((r) => { if (!r.ok) throw new Error(`session read failed: ${r.status}`); return r.json() as Promise<{ settings?: ChatSettings }>; })
 				.then((body) => setSession({ settings: body.settings }))
 				.catch(() => {
 					/* same read-only posture as a models-section failure */
 				});
 		}
-		fetch("/api/settings")
-			.then((r) => r.json() as Promise<{ settings: { models?: ModelsSettings } | null }>)
-			.then((body) => setModels(body.settings?.models ?? undefined))
-			.catch(() => {
-				/* the record fetch failing leaves the control read-only
-				   ("—" triggers, closed menus) — same posture as a
-				   catalog failure */
-			});
+		// Shared flight (perf wave): the appearance provider and the
+		// coverage ring read the same record at mount — one GET serves all.
+		void getSettingsRecord().then((body) => {
+			if (body) setModels(body.settings?.models ?? undefined);
+			/* a failed read leaves the control read-only
+			   ("—" triggers, closed menus) — same posture as a
+			   catalog failure */
+		});
 	}, [chatId]);
 
 	useEffect(() => {

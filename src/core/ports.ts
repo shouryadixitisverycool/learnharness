@@ -80,6 +80,13 @@ export interface ChatStore {
 	/** Every attachment blob name any chat record references (raw scan —
 	 *  includes records this build refuses to read), for blob sweeps. */
 	referencedAttachmentFiles(): Set<string>;
+	/** `compute(record)` for the record as it is on disk now, or null when
+	 *  getChat would return null. The result is remembered per `key` while
+	 *  the file's stat signature holds (the listChats summary-cache rule), so
+	 *  `compute` must be a pure function of the record, and callers must
+	 *  treat the result as read-only. Optional: fakes without it go through
+	 *  deriveChat's getChat fallback (core/chat-derive.ts). */
+	derive?<T>(id: string, key: string, compute: (record: Readonly<ChatRecord>) => T): T | null;
 }
 
 // ─── GraphStore — the append-only evidence ledgers (data/graph) ──────────────

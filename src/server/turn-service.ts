@@ -21,7 +21,8 @@ import type { LhMessage } from "../core/native-messages.ts";
 import { newMessageId } from "../core/native-messages.ts";
 import { QUESTION_TOOLS } from "../core/pending.ts";
 import { planBlocksFor } from "../core/plan-blocks.ts";
-import { coverageOf } from "../core/coverage.ts";
+import { coverageFingerprints, coverageTotals } from "../core/coverage.ts";
+import { deriveChat } from "../core/chat-derive.ts";
 import type { ChatStore, GraphStore } from "../core/ports.ts";
 import type { ExtractionPipeline } from "../agent/subagents/extraction.ts";
 import { ModelsNotConfiguredError, ProviderKeyMissingError } from "../core/settings.ts";
@@ -114,9 +115,9 @@ export function triggerExtraction(
 ): void {
 	if (process.env.NODE_ENV === "test") return;
 	try {
-		const record = deps.chatStore.getChat(chatId);
-		if (!record) return;
-		const covered = coverageOf(record.messages, deps.graphStore.readCoverage(), chatId);
+		const fingerprints = deriveChat(deps.chatStore, chatId, "coverage-fingerprints", (record) => coverageFingerprints(record.messages));
+		if (!fingerprints) return;
+		const covered = coverageTotals(fingerprints, deps.graphStore.readCoverage(), chatId);
 		if (covered.uncoveredTokens < chunkTokens) return;
 		void extraction.runExtraction(chatId).catch((err) => {
 			// BYOK (owner, 2026-09-22) + key presence (provider-key interlude,

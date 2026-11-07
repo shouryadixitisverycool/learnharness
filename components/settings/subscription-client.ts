@@ -9,10 +9,23 @@ type Reply<T> = { value: T; browserAction?: string; error?: string };
 const PATH = "/api/subscriptions";
 const headers = { "Content-Type": "application/json", "x-learnharness-subscriptions": "1" };
 
-async function status() {
-	const response = await fetch(PATH, { headers, cache: "no-store" });
-	if (!response.ok) throw new Error("Subscription status is unavailable.");
-	return response.json() as Promise<{ chatgpt: ChatGPTStatus; native: NativeSubscriptionStatus[] }>;
+/* One flight (perf wave, 2026-11-06): the ChatGPT and native-subscription
+ * providers each read the SAME status body — at mount, on every
+ * subscriptions-changed event, and on every channel resync they fire
+ * within the same tick. Share the in-flight request so each pair lands
+ * as one GET; the promise settles before either consumer continues, so
+ * neither ever sees a cached value. */
+type StatusBody = { chatgpt: ChatGPTStatus; native: NativeSubscriptionStatus[] };
+let statusInflight: Promise<StatusBody> | undefined;
+async function status(): Promise<StatusBody> {
+	if (statusInflight) return statusInflight;
+	statusInflight = fetch(PATH, { headers, cache: "no-store" })
+		.then((response) => {
+			if (!response.ok) throw new Error("Subscription status is unavailable.");
+			return response.json() as Promise<StatusBody>;
+		})
+		.finally(() => { statusInflight = undefined; });
+	return statusInflight;
 }
 async function control<T>(providerId: string, op: string, fields: Record<string, unknown> = {}): Promise<Reply<T>> {
 	const response = await fetch(PATH, { method: "POST", headers, body: JSON.stringify({ providerId, op, ...fields }) });

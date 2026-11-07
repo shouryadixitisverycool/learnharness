@@ -58,6 +58,7 @@ function createChat(title: string, kind?: "practice"): ChatRecord {
  *  lazy migration means existing files only get stamped on their next write.
  *  A future-version guard lives on the read side (getChat). */
 function writeChat(record: ChatRecord): void {
+	derivedCache.delete(chatFile(record.id));
 	writeFileAtomicSync(chatFile(record.id), JSON.stringify({ ...record, version: CURRENT_CHAT_VERSION }, null, "\t"), { allowInPlaceFallback: true });
 }
 
@@ -124,6 +125,54 @@ function summaryOf(id: string): ChatSummary | null {
  *  full parse. Only successful projections are cached, so a transient read
  *  failure retries next list. */
 const summaryCache = new Map<string, { signature: string; summary: ChatSummary }>();
+
+function statSignature(file: string): string | null {
+	try {
+		const stat = fs.statSync(file);
+		return `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+	} catch {
+		return null;
+	}
+}
+
+/** derive()'s memory, per record file, under the summary cache's rule:
+ *  valid while the stat signature holds. In-process writes also drop the
+ *  entry outright. `record` is one parse shared by every key computed for
+ *  that file version; it is never handed out, and only the most recently
+ *  used DERIVE_RECORDS entries keep it (values are small and stay). */
+const derivedCache = new Map<string, { signature: string; record?: ChatRecord; values: Map<string, unknown> }>();
+const DERIVE_RECORDS = 4;
+
+function derive<T>(id: string, key: string, compute: (record: Readonly<ChatRecord>) => T): T | null {
+	let file: string;
+	try {
+		file = chatFile(id);
+	} catch {
+		return null; // getChat's answer for an invalid id
+	}
+	// Stat BEFORE reading: a write landing in between leaves newer bytes
+	// under the older signature, which the next call's stat then rejects.
+	const signature = statSignature(file);
+	if (signature === null) {
+		derivedCache.delete(file);
+		return null;
+	}
+	let entry = derivedCache.get(file);
+	if (entry?.signature !== signature) entry = { signature, values: new Map() };
+	derivedCache.delete(file); // re-insert: Map order is recency order
+	derivedCache.set(file, entry);
+	if (entry.values.has(key)) return entry.values.get(key) as T;
+	const record = entry.record ?? getChat(id);
+	if (!record) return null; // like the summary cache, only successes are kept
+	entry.record = record;
+	const value = compute(record);
+	entry.values.set(key, value);
+	let kept = 0;
+	for (const other of [...derivedCache.values()].reverse()) {
+		if (other.record && ++kept > DERIVE_RECORDS) other.record = undefined;
+	}
+	return value;
+}
 
 function listChats(): ChatSummary[] {
 	try {
@@ -256,6 +305,7 @@ function renameChatFromPlan(id: string, title: string): void {
  *  choreography (core/graph-deletion.ts), not the store's. */
 function deleteChat(id: string): boolean {
 	try {
+		derivedCache.delete(chatFile(id));
 		fs.unlinkSync(chatFile(id));
 		removeLeftoverTemps(chatFile(id));
 		emit("chats-changed", {}); // only a real removal — the present-entry law
@@ -344,4 +394,5 @@ export const chatStore: ChatStore = {
 	referencedAttachmentFiles,
 	appendTurnUsage,
 	appendExtractionUsage,
+	derive,
 };

@@ -15,7 +15,7 @@ async function fixture() {
 	for (const [key, value] of Object.entries({
 		React, window, document, IS_REACT_ACT_ENVIRONMENT: true,
 		fetch: (url: string) => {
-			assert.equal(url, "/api/chats/chat_title");
+			assert.equal(url, "/api/chats/chat_title?only=title");
 			return new Promise<Response>((resolve) => { requests.push(resolve); });
 		},
 	})) {

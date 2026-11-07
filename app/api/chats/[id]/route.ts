@@ -8,6 +8,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 	const only = new URL(req.url).searchParams.get("only");
 	if (only === "stats") return Response.json({ turns: chat.turns, pricing: sessionCost(chat) });
 	if (only === "coverage") return Response.json({ coverage: sessionCoverage(id) });
+	// Slim single-field reads: the header title and the model pill used to
+	// each pull the FULL record (messages included — 140 KiB on a long
+	// session) for one field.
+	if (only === "title") return Response.json({ title: chat.title });
+	if (only === "settings") return Response.json({ settings: chat.settings });
 	// turnInFlight lets a returning client re-attach to a running turn
 	// (chat-handler write-ahead + registry — see src/server/turn-liveness.ts).
 	// coverage (extraction-UX redesign, 2026-09-24): the chat view's ring

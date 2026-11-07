@@ -33,7 +33,7 @@ import {
 	type SimulationNodeDatum,
 } from "d3-force";
 import type { GraphEdge, GraphNode, Position } from "./contracts.ts";
-import { seededRandom } from "./question-core.ts";
+import { seededRandom } from "./seeded-random.ts";
 
 /** A node the d3 simulation mutates (x/y/vx/vy; fx/fy = pinned). */
 export interface LayoutNode extends SimulationNodeDatum {

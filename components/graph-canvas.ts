@@ -55,6 +55,7 @@ import { select } from "d3-selection";
 import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from "d3-zoom";
 import type { Simulation, SimulationLinkDatum } from "d3-force";
 import { clusterHue, type Pt } from "./cluster-geometry.ts";
+import { FrameScheduler } from "./frame-scheduler.ts";
 import type { RenderedMode } from "@/src/core";
 import {
 	CHARGE_STRENGTH,
@@ -620,7 +621,9 @@ export class GraphCanvasRenderer {
 	private simMoved = false; // any real movement since the last commit
 	private commitTimer: ReturnType<typeof setTimeout> | null = null;
 
-	private frameId: number | null = null;
+	// The one rAF slot. Suspended while a navigation away is in flight
+	// (suspend/resume below): no frames, no physics steps until resumed.
+	private frames = new FrameScheduler(() => this.tick());
 	private dirty = true;
 	/** True while tick() runs: markDirty inside the loop (d3's zoom event
 	 *  fires from advanceZoom) must NOT schedule — the loop schedules
@@ -761,7 +764,9 @@ export class GraphCanvasRenderer {
 			// store (which clears the canvas), and during live window resizes
 			// rAF is starved by relayout — a deferred draw would leave the
 			// canvas blank for the whole drag (the resize-blanking bug).
-			this.draw();
+			// Suspended (leaving the page): hold it for resume instead.
+			if (this.frames.suspended) this.markDirty();
+			else this.draw();
 		});
 		this.resizeObserver.observe(canvas);
 		this.syncSize();
@@ -913,8 +918,19 @@ export class GraphCanvasRenderer {
 		if (w >= 10 && h >= 10) this.kFit = fitTransform(this.worldBBox, w, h, 40).k;
 	}
 
+	/** Stop drawing and stepping physics (a navigation away started). State
+	 *  keeps changing as usual; the held frame runs on resume(). */
+	suspend(): void {
+		this.frames.suspend();
+	}
+
+	/** Undo suspend(): the navigation stayed on this page. */
+	resume(): void {
+		this.frames.resume();
+	}
+
 	destroy(): void {
-		if (this.frameId !== null) cancelAnimationFrame(this.frameId);
+		this.frames.cancel();
 		if (this.commitTimer) clearTimeout(this.commitTimer);
 		this.sim = null;
 		this.simActive = false;
@@ -936,6 +952,7 @@ export class GraphCanvasRenderer {
 	 *  tick loop (cursor-anchored). Sensitivity formula is d3-zoom's own. */
 	private onWheel = (e: WheelEvent) => {
 		e.preventDefault();
+		this.frames.resume();
 		const delta = -e.deltaY * (e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002);
 		const { x, y } = this.eventPos(e);
 		const current = this.zoomTarget?.k ?? this.transform.k;
@@ -948,6 +965,7 @@ export class GraphCanvasRenderer {
 	};
 
 	private onPointerMove = (e: PointerEvent) => {
+		this.frames.resume();
 		const pos = this.eventPos(e);
 		if (this.dragId) {
 			const n = this.simById.get(this.dragId);
@@ -977,6 +995,7 @@ export class GraphCanvasRenderer {
 	};
 
 	private onPointerDown = (e: PointerEvent) => {
+		this.frames.resume();
 		// Primary button only (owner, polish round): a right-press must not
 		// pin the node — right-click belongs to the context menu alone, and
 		// the right-pointerup must never read as a click (the detail card
@@ -1110,12 +1129,7 @@ export class GraphCanvasRenderer {
 
 	private markDirty(): void {
 		this.dirty = true;
-		if (this.frameId === null && !this.inTick) {
-			this.frameId = requestAnimationFrame(() => {
-				this.frameId = null;
-				this.tick();
-			});
-		}
+		if (!this.inTick) this.frames.request();
 	}
 
 	private tick(): void {
@@ -1136,12 +1150,7 @@ export class GraphCanvasRenderer {
 		} finally {
 			this.inTick = false;
 		}
-		if (this.animating) {
-			this.frameId = requestAnimationFrame(() => {
-				this.frameId = null;
-				this.tick();
-			});
-		}
+		if (this.animating) this.frames.request();
 	}
 
 	/** One live-sim step; returns true while physics is still in motion.

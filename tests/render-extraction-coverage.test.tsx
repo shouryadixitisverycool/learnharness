@@ -12,6 +12,7 @@ import {
 	ringFill,
 	type SessionCoverage,
 } from "../components/extraction-coverage.tsx";
+import { resetSettingsRecordForTest } from "../components/settings-record.ts";
 
 /**
  * The extraction-coverage surfaces (extraction-UX redesign, owner-locked
@@ -45,6 +46,9 @@ describe("fetchGraphRead — one truth with the extraction trigger (2026-10-02)"
 	// frequent graph updates); the LAW is unchanged — the denominator is the
 	// factory the same core resolver serves, never a hand-rolled constant.
 	const stub = (payload: unknown, ok = true) => {
+		// fetchGraphRead rides the shared settings-record flight — reset its
+		// page-lifetime cache so each stubbed response is observed.
+		resetSettingsRecordForTest();
 		const real = globalThis.fetch;
 		globalThis.fetch = (async () =>
 				new Response(JSON.stringify(payload), { status: ok ? 200 : 500 })) as typeof fetch;
