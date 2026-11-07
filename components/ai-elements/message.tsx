@@ -12,6 +12,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { gateCodeHighlighter } from "@/lib/code-highlight-gate";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { createMathPlugin } from "@streamdown/math";
@@ -353,12 +354,22 @@ export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 const mathPlugin = createMathPlugin({ singleDollarTextMath: true });
 const mathRehype = mathPlugin.rehypePlugin as [unknown, Record<string, unknown>];
 
+// Code highlighting waits for a chat's first paint (lib/code-highlight-gate.ts).
+// The themes are the plugin's own fixed pair, so language + code names a result.
+const gatedCode = gateCodeHighlighter(
+  code as unknown as Parameters<typeof gateCodeHighlighter>[0],
+  (options) => {
+    const { language, code: source } = options as { language: string; code: string };
+    return `${language}\u0000${source}`;
+  },
+) as unknown as typeof code;
+
 export const streamdownPlugins = {
   cjk: {
     ...cjk,
     remarkPluginsAfter: [...cjk.remarkPluginsAfter, remarkBreaks],
   },
-  code,
+  code: gatedCode,
   math: {
     ...mathPlugin,
     rehypePlugin: [mathRehype[0], { ...mathRehype[1], strict: false }],
