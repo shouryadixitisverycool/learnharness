@@ -61,7 +61,7 @@ import type { PlanBlockData, SideQuestionDetails } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { SessionFind } from "@/components/session-find";
 import { SessionMessageNavigation } from "@/components/session-navigation";
-import { BottomPin, TranscriptAnchor, useProgressiveMount } from "@/components/transcript-anchor";
+import { BottomPin, TranscriptAnchor, useHoldCodeHighlightUntilPaint, useProgressiveMount } from "@/components/transcript-anchor";
 import { SelectionToolbar } from "@/components/selection-toolbar";
 import { createCiteAction, type CitationEditTarget } from "@/components/citation-actions";
 import { CitationActionsContext, type CitationActions } from "@/components/citation-chip";
@@ -304,6 +304,7 @@ export function Chat({
 	const sourceTextParts = useMemo(() => firstSourceTextParts(messages), [messages]);
 	// Newest rows first, older ones over the next frames (transcript-anchor.tsx).
 	const mountFrom = useProgressiveMount(messages.length);
+	useHoldCodeHighlightUntilPaint();
 	const transcriptRootRef = useRef<HTMLDivElement | null>(null);
 
 	// The reattach settled terminal → the sync-and-continue seam (below).

@@ -3,6 +3,7 @@
 import { Component, startTransition, useEffect, useLayoutEffect, useState, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import type { StickToBottomContext } from "use-stick-to-bottom";
+import { holdCodeHighlight } from "@/lib/code-highlight-gate";
 import { messageIdFromHash } from "@/src/core";
 
 /** Progressive transcript mount (owner, perf round 2, 2026-11-06): a chat
@@ -76,6 +77,25 @@ export function useProgressiveMount(count: number): number {
 	}, [from]);
 
 	return from;
+}
+
+/** Code blocks of the first rows paint uncolored and tokenize right after
+ * the first paint (owner, perf round 2b), instead of inside the commit. The
+ * layout effect runs before any code block's passive highlight effect; the
+ * release lands after the next frame's paint, like the first mount chunk. */
+export function useHoldCodeHighlightUntilPaint(): void {
+	useLayoutEffect(() => {
+		const release = holdCodeHighlight();
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const frame = requestAnimationFrame(() => {
+			timer = setTimeout(release, 0);
+		});
+		return () => {
+			cancelAnimationFrame(frame);
+			if (timer !== undefined) clearTimeout(timer);
+			release();
+		};
+	}, []);
 }
 
 interface AnchorSnapshot {
