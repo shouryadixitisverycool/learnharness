@@ -106,9 +106,6 @@ export function parseClaudeCodeSettingsBody(body: unknown): SettingsBodyResult<{
 	return { ok: true, settings: { enabled: raw.enabled } };
 }
 
-/** cursor: the same explicit app-wide opt-in as claudeCode. */
-export const parseCursorSettingsBody = parseClaudeCodeSettingsBody;
-
 /** agent.models: only the six known background roles; each override's
  *  fields mirror ChatSettings (model pair + independent thinkingLevel). */
 function parseRoleOverride(value: unknown, role: string): { ok: true; override: RoleModelOverride } | { ok: false; error: string } {
@@ -507,7 +504,6 @@ export const SETTINGS_SECTIONS = {
 	models: parseModelsSettingsBody,
 	dictation: parseDictationSettingsBody,
 	claudeCode: parseClaudeCodeSettingsBody,
-	cursor: parseCursorSettingsBody,
 	studyTime: parseStudyTimeSettingsBody,
 } as const;
 

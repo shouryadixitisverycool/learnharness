@@ -94,71 +94,6 @@ cookie would travel unencrypted. Pick one:
   gets a certificate automatically. Keep SSE unbuffered (Caddy does this by
   default; for nginx set `proxy_buffering off` on `/api/`).
 
-## Cursor subscription (cursor-agent)
-
-The Cursor provider runs lessons on your Cursor subscription (Grok 4.7 Fast and
-Grok 4.7) through Cursor's official CLI, `cursor-agent`. It works on the server,
-so you need the CLI installed and signed in on the server machine:
-
-```bash
-curl https://cursor.com/install -fsS | bash   # installs ~/.local/bin/cursor-agent
-cursor-agent login
-```
-
-Then turn on **Settings → Providers → External CLI → Cursor**. The row shows the
-CLI version and whether it is signed in; pick a Cursor model in the model picker.
-
-LearnHarness never runs the CLI with your real `HOME`. Each run gets its own
-`HOME` under the data dir (`<data>/cursor-home`), and LearnHarness rewrites two
-guards there before every run:
-
-- `cli-config.json` allows only the LearnHarness MCP server and denies shell,
-  file and web tools.
-- `hooks.json` runs a fail-closed `preToolUse` hook that denies every tool call
-  except the LearnHarness tools of that run. This one matters: in cursor-agent
-  2026.08.25 the built-in grep and glob tools ignore the permission lists and can
-  read any file the server user can read.
-
-Your real `~/.cursor` config and its allowlists are never read. Only the auth dir
-is shared, through a symlink, so token refreshes reach your normal login. The
-CLI's own sandbox stays off (`--sandbox disabled`): it needs unprivileged user
-namespaces, which Ubuntu's AppArmor blocks by default.
-
-Two settings tell the server where things are:
-
-- `LH_CURSOR_AGENT_PATH`: the CLI. Default: `cursor-agent` on `PATH`, then `~/.local/bin`.
-- `LH_CURSOR_CONFIG_DIR`: the directory holding Cursor's `auth.json`. Default: `$HOME/.config/cursor`.
-
-In Docker, the container user is `node` (uid 1000). The host CLI runs inside the
-container when its install directory is mounted read-only at the same path,
-because it ships its own Node and its launcher resolves paths from its own
-location. The auth dir must be writable, since the CLI refreshes tokens there.
-Add a `docker-compose.override.yml` next to `docker-compose.yml`:
-
-```yaml
-services:
-  learnharness:
-    volumes:
-      - ${HOME}/.local/share/cursor-agent:${HOME}/.local/share/cursor-agent:ro
-      - ${HOME}/.config/cursor:/home/node/.config/cursor
-    environment:
-      # The real binary, not the ~/.local/bin symlink. Find it with
-      #   readlink -f ~/.local/bin/cursor-agent
-      # and update this line after `cursor-agent update`.
-      LH_CURSOR_AGENT_PATH: ${HOME}/.local/share/cursor-agent/versions/2026.08.25-3e8eec8/cursor-agent
-      LH_CURSOR_CONFIG_DIR: /home/node/.config/cursor
-```
-
-Then `docker compose up -d` again. If the Providers row says "not signed in",
-run `cursor-agent login` on the host; the container sees the new login at once.
-
-How a lesson runs: one CLI run serves a stretch of the lesson, and fast tools
-(search, notes, the graph) are answered inside that run. A question to the
-learner ends the run, because the CLI gives each tool call only 60 seconds. When
-the learner answers, a new run starts and gets the conversation so far as a
-transcript. Each new run spends a few seconds starting up and about 7k tokens of
-Cursor's own prompt (mostly cached).
-
 ## Data and backups
 
 Everything lives in the `learnharness-data` Docker volume (`/data` in the
@@ -187,5 +122,4 @@ LH_SERVER_PASSWORD=... LH_DATA_DIR=/srv/learnharness LH_AUTH_FILE=/srv/learnharn
 - Desktop-only features don't apply in the browser: signing in with a
   ChatGPT/Copilot subscription window, the local Claude Code CLI, and
   dropping file paths from your computer. Use API keys on the server instead.
-  The Cursor CLI is the exception: it runs on the server (see above).
 - The agent's PDF tool reads paths on the **server's** filesystem.

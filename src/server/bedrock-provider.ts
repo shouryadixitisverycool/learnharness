@@ -8,7 +8,7 @@
  * static amazon-bedrock catalog while configured, streaming through pi's
  * native Converse adapter. The key is read from the auth file (or a real
  * env var) per publication and handed to pi per request. It is never copied
- * into process.env, so child processes (Claude Code, Cursor) never inherit it.
+ * into process.env, so child processes (Claude Code) never inherit it.
  */
 
 import { createProvider, type Api, type Model, type Provider } from "@earendil-works/pi-ai";

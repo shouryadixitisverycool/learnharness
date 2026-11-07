@@ -1120,6 +1120,20 @@ describe("the key-presence turn gate (provider-key interlude, 2026-09-25)", () =
 		}
 	});
 
+	it("a chat pinned to a removed provider (cursor:grok-4.7-fast) refuses with 503 model unavailable — nothing lingers", async () => {
+		const chat = chatStore.createChat("Test: removed provider");
+		createdChats.push(chat.id);
+		// The Cursor provider was removed: an unknown provider needs no key,
+		// so the gate passes and the engine build is what refuses.
+		chatStore.saveSettings(chat.id, { model: { provider: "cursor", id: "grok-4.7-fast" } });
+		const res = await handleChatRequest(post(chat.id, { type: "text", text: "teach me something" }), agentFactory(scriptedTeacher(defaultLesson).engine));
+
+		assert.equal(res.status, 503);
+		assert.deepEqual(await res.json(), { error: "The selected model is unavailable." });
+		assert.equal(isTurnRunning(chat.id), false, "the refusal never registers a live turn");
+		assert.equal(chatStore.getChat(chat.id)!.messages.length, 0, "no write-ahead persist before the refusal");
+	});
+
 	it("an env-present key passes the gate (gate by what would run)", async () => {
 		const chat = chatStore.createChat("Test: env-keyed provider");
 		createdChats.push(chat.id);

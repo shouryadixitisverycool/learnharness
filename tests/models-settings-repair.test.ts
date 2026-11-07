@@ -110,6 +110,20 @@ test("introduced or replaced unknown models still reject, without writing any se
 	assert.equal((await put(initial)).status, 400, "missing slots cannot introduce disconnected models");
 });
 
+test("slots on a removed provider (cursor:grok-4.7-fast) take the same repair path", async () => {
+	const cursor = { provider: "cursor", id: "grok-4.7-fast" };
+	const saved: ModelsSettings = { strong: { model: cursor, thinkingLevel: "medium" }, cheap: { model: cursor, thinkingLevel: "low" }, vision: { model: replacement } };
+	// An older record still carries the removed provider's opt-in.
+	writeSettingsRecord({ version: 1, models: saved, cursor: { enabled: true } } as Parameters<typeof writeSettingsRecord>[0]);
+	// The sanitizer keeps unknown top-level keys verbatim; nothing reads this one.
+	assert.deepEqual(readSettingsRecord()!.cursor, { enabled: true });
+	assert(!modelCatalog().models.some((model) => model.provider === "cursor"), "no Cursor models to pick");
+	assert.throws(() => piEngineForSpec(cursor, false), /catalog has no model/);
+	assert.equal((await put({ ...saved, strong: { model: replacement } })).status, 200);
+	assert.deepEqual(readSettingsRecord()!.models, { ...saved, strong: { model: replacement } }, "the other Cursor slot stays saved");
+	assert.equal((await put({ ...saved, strong: { model: replacement }, vision: { model: cursor } })).status, 400, "a Cursor model cannot be introduced");
+});
+
 test("a first models write cannot introduce disconnected selections", async () => {
 	fs.unlinkSync(path.join(directory, "settings.json"));
 	assert.equal((await put(initial)).status, 400);
