@@ -29,6 +29,12 @@ function fakePlugin() {
 	return { plugin, calls, flush };
 }
 
+const tasks = (n = 1) => new Promise<void>((resolve) => {
+	let left = n;
+	const next = () => (--left <= 0 ? resolve() : setTimeout(next, 0));
+	setTimeout(next, 0);
+});
+
 const keyOf = (o: Options) => `${o.language}\u0000${o.code}`;
 
 describe("code highlight gate", () => {
@@ -43,7 +49,7 @@ describe("code highlight gate", () => {
 		assert.equal(gated.name, "fake");
 	});
 
-	it("holds uncached requests until the last hold is released", () => {
+	it("holds uncached requests until the last hold is released", async () => {
 		const { plugin, calls, flush } = fakePlugin();
 		const gated = gateCodeHighlighter(plugin, keyOf);
 		const got: string[] = [];
@@ -55,9 +61,27 @@ describe("code highlight gate", () => {
 		releaseA(); // idempotent
 		assert.deepEqual(calls, []);
 		releaseB();
+		assert.deepEqual(calls, []);
+		await tasks();
 		assert.deepEqual(calls, ["a"]);
 		flush();
 		assert.deepEqual(got, ["tokens:a"]);
+	});
+
+	it("runs held requests one per task and pauses under a new hold", async () => {
+		const { plugin, calls } = fakePlugin();
+		const gated = gateCodeHighlighter(plugin, keyOf);
+		const release = holdCodeHighlight();
+		for (const code of ["a", "b", "c"]) gated.highlight({ code, language: "js" }, () => {});
+		release();
+		await tasks();
+		assert.deepEqual(calls, ["a"]);
+		const again = holdCodeHighlight();
+		await tasks(3);
+		assert.deepEqual(calls, ["a"]);
+		again();
+		await tasks(4);
+		assert.deepEqual(calls, ["a", "b", "c"]);
 	});
 
 	it("answers already-tokenized requests synchronously during a hold", () => {
@@ -74,7 +98,7 @@ describe("code highlight gate", () => {
 		}
 	});
 
-	it("delivers a result that became cached while the request was held", () => {
+	it("delivers a result that became cached while the request was held", async () => {
 		const { plugin, flush } = fakePlugin();
 		const gated = gateCodeHighlighter(plugin, keyOf);
 		const other = gateCodeHighlighter(plugin, keyOf);
@@ -82,11 +106,13 @@ describe("code highlight gate", () => {
 		const got: string[] = [];
 		gated.highlight({ code: "a", language: "js" }, (r) => got.push(r));
 		release();
+		await tasks();
 		flush();
 		// A second wrapper over the same plugin starts with no known keys.
 		const again = holdCodeHighlight();
 		other.highlight({ code: "a", language: "js" }, (r) => got.push(r));
 		again();
+		await tasks();
 		assert.deepEqual(got, ["tokens:a", "tokens:a"]);
 	});
 });
