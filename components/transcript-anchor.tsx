@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, useEffect, useLayoutEffect, useState, type ReactNode, type RefObject } from "react";
+import { Component, startTransition, useEffect, useLayoutEffect, useState, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import type { StickToBottomContext } from "use-stick-to-bottom";
 import { messageIdFromHash } from "@/src/core";
@@ -8,8 +8,8 @@ import { messageIdFromHash } from "@/src/core";
 /** Progressive transcript mount (owner, perf round 2, 2026-11-06): a chat
  * opens with its newest FIRST_FRAME_ROWS view messages, on the server render
  * and the client's first frame alike, then mounts the older ones
- * ROWS_PER_FRAME at a time, one chunk per frame, newest-first, until the
- * whole transcript is in the DOM. Scrolling up or Find in that first moment
+ * ROWS_PER_FRAME at a time, one chunk per frame (rendered as a
+ * transition), newest-first, until the whole transcript is in the DOM. Scrolling up or Find in that first moment
  * may not reach older rows yet; that was accepted. A URL hash naming a
  * message mounts everything at once, so deep links land as before. */
 export const FIRST_FRAME_ROWS = 12;
@@ -57,12 +57,17 @@ export function useProgressiveMount(count: number): number {
 	}, [from]);
 
 	// One chunk per frame: the rAF lands in the frame after this commit was
-	// painted, the timeout after that frame's paint.
+	// painted, the timeout after that frame's paint. Each chunk renders as a
+	// transition (owner, perf round 2b, 2026-11-07): React yields every few
+	// ms while rendering the chunk's markdown, so input and other work are not
+	// held behind a 60-120 ms task. The commit stays atomic, so the anchor
+	// still measures and corrects around it. A hash mount (flushSync above)
+	// or any urgent update interrupts a pending chunk; it restarts after.
 	useEffect(() => {
 		if (from === 0) return;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const frame = requestAnimationFrame(() => {
-			timer = setTimeout(() => setFrom(nextMountedIndex), 0);
+			timer = setTimeout(() => startTransition(() => setFrom(nextMountedIndex)), 0);
 		});
 		return () => {
 			cancelAnimationFrame(frame);
