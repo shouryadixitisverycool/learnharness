@@ -412,9 +412,6 @@ describe("the claude-code provider (native CLI authentication, no LearnHarness k
 		parity();
 		withClaudeInstalled(true, parity);
 		withClaudeInstalled(false, parity);
-		withCursorInstalled(true, parity);
-		withCursorInstalled(false, parity);
-		withCursorInstalled(true, parity, false);
 	});
 
 	it('piEngineForSpec({ provider: "claude-code", id: "sonnet" }) resolves', () => {

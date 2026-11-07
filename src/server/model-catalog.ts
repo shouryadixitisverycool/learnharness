@@ -103,7 +103,6 @@ function catalogProviderKeyed(id: string): boolean {
 	if (AUTH_PROVIDER_KEYS.some((p) => p.id === id && keyValue(p.envVar) !== undefined)) return true;
 	if (id === "chatgpt" && chatGPTConnected()) return true;
 	if (id === CLAUDE_CODE_PROVIDER && claudeCodeAvailable()) return true;
-	if (id === CURSOR_PROVIDER && cursorAvailable()) return true;
 	if (NATIVE_SUBSCRIPTIONS.some((p) => p.logicalId === id && nativeSubscriptionConnected(p.providerId))) return true;
 	return id === CUSTOM_PROVIDER.id && customProviderUsable(effectiveSettings().customProvider) && customProviderAvailable();
 }
