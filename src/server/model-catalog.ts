@@ -22,6 +22,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { piModels } from "../agent/models.ts";
 import { customProviderAvailable } from "./custom-provider.ts";
 import { bedrockPriceUnknown, bedrockProviderAvailable } from "./bedrock-provider.ts";
+import { azurePriceUnknown, azureProviderAvailable } from "./azure-provider.ts";
 import { chatGPTConnected, chatGPTModel, chatGPTModels, refreshChatGPTModels } from "../agent/chatgpt-bridge.ts";
 import { NATIVE_SUBSCRIPTIONS } from "../core/contracts/subscriptions.ts";
 import { nativeSubscriptionId, nativeSubscriptionConnected, nativeSubscriptionModel, nativeSubscriptionModels, refreshSubscriptionModels } from "../agent/subscription-bridge.ts";
@@ -50,12 +51,13 @@ import type {
 	SlotPins,
 } from "../core/contracts/models.ts";
 import type { EffectiveModelSpec, EffectiveSlot } from "../core/settings-resolution.ts";
-import { AUTH_PROVIDER_KEYS, BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
+import { AUTH_PROVIDER_KEYS, AZURE_PROVIDER, BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import { claudeCodeAvailable } from "./claude-code-config.ts";
 import { CLAUDE_CODE_PROVIDER } from "../agent/claude-code/constants.ts";
 import {
 	BACKGROUND_MODEL_ROLES,
 	MODEL_SLOTS,
+	azureProviderConfigured,
 	bedrockProviderConfigured,
 	customProviderUsable,
 	type BackgroundModelRole,
@@ -202,6 +204,11 @@ export function catalogProviders(): CatalogProvider[] {
 		...(bedrockProviderConfigured(settingsStore.readSettings()?.bedrockProvider ?? undefined)
 			? [{ id: BEDROCK_PROVIDER.id, envVar: BEDROCK_PROVIDER.envVar, keyPresent: bedrockProviderAvailable() }]
 			: []),
+		// Azure OpenAI: a row once an endpoint is saved; keyPresent = the
+		// discovered provider is registered (key present, deployments found).
+		...(azureProviderConfigured(settingsStore.readSettings()?.azureProvider ?? undefined)
+			? [{ id: AZURE_PROVIDER.id, envVar: AZURE_PROVIDER.envVar, keyPresent: azureProviderAvailable() }]
+			: []),
 	]).sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -221,7 +228,7 @@ export function toModelDto(model: Model<Api>): ModelDto {
 		reasoning: model.reasoning,
 		input: [...model.input],
 		supportedLevels: getSupportedThinkingLevels(model),
-		cost: model.provider === CLAUDE_CODE_PROVIDER || model.provider === CUSTOM_PROVIDER.id || (model.provider === BEDROCK_PROVIDER.id && bedrockPriceUnknown(model.id)) ? null : {
+		cost: model.provider === CLAUDE_CODE_PROVIDER || model.provider === CUSTOM_PROVIDER.id || (model.provider === BEDROCK_PROVIDER.id && bedrockPriceUnknown(model.id)) || (model.provider === AZURE_PROVIDER.id && azurePriceUnknown(model.id)) ? null : {
 			input: model.cost.input,
 			output: model.cost.output,
 			cacheRead: model.cost.cacheRead,

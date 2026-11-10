@@ -97,6 +97,15 @@ export function nativeBedrockProvider(): Provider<Api> | undefined {
 	return nativeBedrock;
 }
 
+let nativeAzure: Provider<Api> | undefined;
+/** pi-ai's own azure entry (static catalog, AZURE_OPENAI_* env), restored
+ *  whenever the user's Azure configuration is absent. Its streams also
+ *  carry the configured provider (server/azure-provider.ts). Set when the
+ *  collection is built, before any source syncs. */
+export function nativeAzureProvider(): Provider<Api> | undefined {
+	return nativeAzure;
+}
+
 /** The process-wide pi-ai Models collection — EVERY builtin provider's
  *  catalog (model slots wave, 2026-09-20): engines and the picker resolve
  *  against all of pi-ai's per-provider catalogs, so a settings slot can pin
@@ -113,6 +122,7 @@ export function piModels() {
 			// Pi's default Node-only loader hides this import from bundlers. Only
 			// replace its lazy forwarding; preserve the native factory's auth/catalog.
 			if (provider.id === "amazon-bedrock") nativeBedrock = { ...provider, ...bedrockNativeStreams() };
+			if (provider.id === "azure") nativeAzure = provider;
 			collection.setProvider(provider.id === "amazon-bedrock" ? nativeBedrock! : provider);
 		}
 		collection.setProvider(createClaudeCodeProvider(streamClaudeCode));

@@ -60,3 +60,4 @@ export { claudeCodeInstallationResponse } from "./claude-code.ts";
 export * from "./custom-provider.ts";
 export { customProviderGet, customProviderMutation } from "./custom-provider-http.ts";
 export { bedrockProviderGet, bedrockProviderMutation } from "./bedrock-provider-http.ts";
+export { azureProviderGet, azureProviderMutation } from "./azure-provider-http.ts";
