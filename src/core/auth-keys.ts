@@ -96,7 +96,8 @@ export interface AuthProviderInfo {
  * EXCLUDED by owner spec — providers whose auth is not a plain key this
  * wave: github-copilot (OAuth), amazon-bedrock (AWS creds; its bearer-key
  * mode has its own editor, see BEDROCK_PROVIDER below), google-vertex
- * (ADC), azure (needs a base URL), the cloudflare
+ * (ADC), azure (needs a base URL; its endpoint + key mode has its own
+ * editor, see AZURE_PROVIDER below), the cloudflare
  * account-scoped pair. Anthropic keeps ANTHROPIC_API_KEY only — its
  * AUTH_TOKEN/OAUTH_TOKEN alternates stay env-only. openai-codex exposes
  * no env-key (naturally absent). Providers sharing one env var (moonshotai
@@ -166,6 +167,20 @@ export const BEDROCK_PROVIDER = {
 	id: "amazon-bedrock",
 	envVar: "AWS_BEARER_TOKEN_BEDROCK",
 	label: "Amazon Bedrock",
+} as const;
+
+/**
+ * Azure OpenAI through an endpoint URL plus an API key. NOT part of
+ * AUTH_PROVIDER_KEYS: the key alone is not enough (pi-ai also needs a base
+ * URL), and the parity test pins that table. The key is stored under the
+ * env-var name pi-ai reads, but LearnHarness never copies the file value
+ * into process.env; server/azure-provider.ts passes it per request. Models
+ * come from the resource's own deployment list.
+ */
+export const AZURE_PROVIDER = {
+	id: "azure",
+	envVar: "AZURE_OPENAI_API_KEY",
+	label: "Azure OpenAI",
 } as const;
 
 /** Every distinct env var a model-provider key rides in (the write side's

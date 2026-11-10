@@ -406,6 +406,66 @@ export function sanitizeBedrockProvider(raw: Record<string, unknown>): BedrockPr
 	return out;
 }
 
+// ─── Azure OpenAI (endpoint + API key) ───────────────────────────────────────
+// NON-SECRET config only: the endpoint URL and the deployments discovery
+// found on the resource. The key lives in the auth store
+// (AZURE_PROVIDER.envVar), never here. Display metadata is joined from
+// pi-ai's Azure catalog at registration (server/azure-provider.ts).
+
+/** Canonical endpoint form: an absolute https URL with no credentials,
+ *  query or fragment, trailing slashes dropped. "" for anything else. */
+export function normalizeAzureEndpoint(raw: unknown): string {
+	if (typeof raw !== "string") return "";
+	const value = normalizeBaseUrl(raw);
+	return value.startsWith("https://") ? value : "";
+}
+
+/** One chat deployment on the resource. `id` is the deployment name, which
+ *  is what requests send as the model. */
+export interface AzureModel {
+	id: string;
+	/** The underlying model Azure reports for the deployment (e.g.
+	 *  gpt-6-sol or gpt-6-sol-2026-09-22), for the metadata join. */
+	model?: string;
+}
+
+export interface AzureProviderSettings {
+	/** Normalized endpoint. Empty/absent = not configured. */
+	endpoint?: string;
+	/** The last discovery's snapshot (rewritten on save/refresh). */
+	models?: AzureModel[];
+}
+
+/** Azure is configured once an endpoint is saved (the key is separate). */
+export function azureProviderConfigured(
+	ap: AzureProviderSettings | undefined,
+): ap is AzureProviderSettings & { endpoint: string } {
+	return Boolean(ap?.endpoint);
+}
+
+/** The azureProvider section: valid endpoint or none; deployments with a
+ *  non-empty id (deduped). Clamp-never-reject, like bedrockProvider. */
+export function sanitizeAzureProvider(raw: Record<string, unknown>): AzureProviderSettings {
+	const out: AzureProviderSettings = {};
+	const endpoint = normalizeAzureEndpoint(raw.endpoint);
+	if (endpoint) out.endpoint = endpoint;
+	if (Array.isArray(raw.models)) {
+		const byId = new Map<string, AzureModel>();
+		for (const m of raw.models) {
+			if (typeof m !== "object" || m === null || Array.isArray(m)) continue;
+			const rec = m as Record<string, unknown>;
+			if (typeof rec.id !== "string") continue;
+			const id = rec.id.trim();
+			if (!id || /\s/.test(id)) continue;
+			const model: AzureModel = { id };
+			if (typeof rec.model === "string" && rec.model.trim() && !/\s/.test(rec.model.trim())) model.model = rec.model.trim();
+			byId.set(id, model);
+		}
+		out.models = [...byId.values()];
+	}
+	return out;
+}
+
 /** First-run gate (model-slots wave, owner 2026-09-20): the app refuses
  *  to start chats until the user has actively picked all three slots —
  *  there ARE no defaults for 33 providers; a configured app is one whose
@@ -594,6 +654,8 @@ export interface UserSettings {
 	customProvider?: CustomProviderSettings;
 	/** Amazon Bedrock's region + discovered models (non-secret config only). */
 	bedrockProvider?: BedrockProviderSettings;
+	/** Azure OpenAI's endpoint + discovered deployments (non-secret config only). */
+	azureProvider?: AzureProviderSettings;
 	appearance?: AppearanceSettings;
 	graph?: GraphSettings;
 	compaction?: CompactionSettings;
@@ -987,6 +1049,9 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 	}
 	if (r.bedrockProvider !== null && typeof r.bedrockProvider === "object" && !Array.isArray(r.bedrockProvider)) {
 		out.bedrockProvider = sanitizeBedrockProvider(r.bedrockProvider as Record<string, unknown>);
+	}
+	if (r.azureProvider !== null && typeof r.azureProvider === "object" && !Array.isArray(r.azureProvider)) {
+		out.azureProvider = sanitizeAzureProvider(r.azureProvider as Record<string, unknown>);
 	}
 	if (r.graph !== null && typeof r.graph === "object" && !Array.isArray(r.graph)) {
 		out.graph = sanitizeGraph(r.graph as Record<string, unknown>);

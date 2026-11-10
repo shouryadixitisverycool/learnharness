@@ -4,8 +4,9 @@
  */
 import { calculateCost, type Usage } from "@earendil-works/pi-ai";
 import { piModels } from "../agent/models.ts";
-import { BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
+import { AZURE_PROVIDER, BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import { bedrockPriceUnknown } from "./bedrock-provider.ts";
+import { azurePriceUnknown } from "./azure-provider.ts";
 import { CLAUDE_CODE_PROVIDER } from "../core/contracts/claude-code.ts";
 import type { CallUsage, ChatRecord, JobRecord, TurnUsage } from "../core/contracts.ts";
 import { isSubscriptionModel, sessionCost as foldSessionCost, turnCost as foldTurnCost, jobCost as foldJobCost } from "../core/prices.ts";
@@ -19,6 +20,7 @@ function catalogModel(id: string) {
 	// its models have no price data (never shown as $0).
 	const model = piModels().getModel(id.slice(0, colon), id.slice(colon + 1));
 	if (id.slice(0, colon) === BEDROCK_PROVIDER.id && bedrockPriceUnknown(id.slice(colon + 1))) return undefined;
+	if (id.slice(0, colon) === AZURE_PROVIDER.id && azurePriceUnknown(id.slice(colon + 1))) return undefined;
 	return model;
 }
 

@@ -26,6 +26,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
 	AUTH_KEYS,
+	AZURE_PROVIDER,
 	BEDROCK_PROVIDER,
 	CUSTOM_MODEL_DEFAULT_CONTEXT_WINDOW,
 	CUSTOM_MODEL_DEFAULT_MAX_TOKENS,
@@ -40,6 +41,7 @@ import { SubscriptionConnections } from "./subscription-connections.tsx";
 import { ClaudeCodeInstallationStatus } from "./claude-code-status.tsx";
 import { ProviderMenuList } from "./model-menu.tsx";
 import { BedrockEditor, BedrockRow, readBedrockStatus, type BedrockStatus } from "./bedrock-provider.tsx";
+import { AzureEditor, AzureRow, readAzureStatus, type AzureStatus } from "./azure-provider.tsx";
 import { MenuShell } from "@/components/menu-shell";
 import { notifySettingsSaved } from "@/components/settings-signal";
 import { DictationLanguageSetting } from "@/components/dictation-language";
@@ -98,6 +100,13 @@ export const BEDROCK_PROVIDER_INFO: ProviderKeyInfo = {
 	label: BEDROCK_PROVIDER.label,
 };
 
+/** Azure OpenAI's synthetic Add-provider entry (offered only while unconfigured). */
+export const AZURE_PROVIDER_INFO: ProviderKeyInfo = {
+	id: AZURE_PROVIDER.id,
+	envVar: AZURE_PROVIDER.envVar,
+	label: AZURE_PROVIDER.label,
+};
+
 /** The classification driving the table groups. Pure — exported for
  *  tests. OpenRouter is un-pinned (wave-5 owner ruling): no synthesis,
  *  no special row — it rides the same provider classification. */
@@ -136,6 +145,8 @@ export function classifyKeys(
 		if (s.id === CUSTOM_PROVIDER.envVar) continue;
 		// Same for the Bedrock key: its home is the Amazon Bedrock row.
 		if (s.id === BEDROCK_PROVIDER.envVar) continue;
+		// And the Azure key: its home is the Azure OpenAI row.
+		if (s.id === AZURE_PROVIDER.envVar) continue;
 		if (providerEnv.has(s.id) || (!s.info && providers === undefined)) providerRows.push(s);
 		else if (!s.info) unknownRows.push(s);
 		// (pre-interlude catalogs: a curated-but-unclassified status still
@@ -401,13 +412,16 @@ export function KeysSection({
 	/** Amazon Bedrock's status + whether its editor is open. */
 	const [bedrock, setBedrock] = useState<BedrockStatus | null>(null);
 	const [editingBedrock, setEditingBedrock] = useState(false);
+	/** Azure OpenAI's status + whether its editor is open. */
+	const [azure, setAzure] = useState<AzureStatus | null>(null);
+	const [editingAzure, setEditingAzure] = useState(false);
 
 	// Escape folds any open editor (unfolded row or the Add-provider paste)
 	// WITHOUT closing the dialog. Claimed at document CAPTURE phase — the
 	// only stopPropagation that outruns both the input's React handler and
 	// the dialog's window-level listener.
 	useEffect(() => {
-		if (openRow === null && adding === null && !addingCustom && !editingBedrock) return;
+		if (openRow === null && adding === null && !addingCustom && !editingBedrock && !editingAzure) return;
 		const onKeyDown = (e: KeyboardEvent) => {
 			if (e.key !== "Escape") return;
 			// A language dropdown above this editor in the dismissal stack owns
@@ -419,10 +433,11 @@ export function KeysSection({
 			setAdding(null);
 			setAddingCustom(false);
 			setEditingBedrock(false);
+			setEditingAzure(false);
 		};
 		document.addEventListener("keydown", onKeyDown, true);
 		return () => document.removeEventListener("keydown", onKeyDown, true);
-	}, [openRow, adding, addingCustom, editingBedrock]);
+	}, [openRow, adding, addingCustom, editingBedrock, editingAzure]);
 
 	const reload = async () => {
 		try {
@@ -445,6 +460,11 @@ export function KeysSection({
 			setBedrock(await readBedrockStatus());
 		} catch {
 			/* Bedrock status unavailable — leave it unset */
+		}
+		try {
+			setAzure(await readAzureStatus());
+		} catch {
+			/* Azure status unavailable — leave it unset */
 		}
 	};
 
@@ -577,16 +597,33 @@ export function KeysSection({
 						onCancel={() => setEditingBedrock(false)}
 					/>
 				)}
+				{azure?.endpoint && (
+					<AzureRow status={azure} expanded={editingAzure} onToggle={() => setEditingAzure((v) => !v)} />
+				)}
+				{editingAzure && (
+					<AzureEditor
+						key={`${azure?.endpoint ?? ""}:${azure?.models.length ?? 0}`}
+						status={azure}
+						onSaved={async () => {
+							setEditingAzure(false);
+							await reload();
+							notifySettingsSaved("keys");
+						}}
+						onCancel={() => setEditingAzure(false)}
+					/>
+				)}
 				{providers !== undefined && (
 					<AddProviderRow
-						addable={[...addable, ...(custom?.baseUrl ? [] : [CUSTOM_PROVIDER_INFO]), ...(bedrock?.region ? [] : [BEDROCK_PROVIDER_INFO])]}
+						addable={[...addable, ...(custom?.baseUrl ? [] : [CUSTOM_PROVIDER_INFO]), ...(bedrock?.region ? [] : [BEDROCK_PROVIDER_INFO]), ...(azure?.endpoint ? [] : [AZURE_PROVIDER_INFO])]}
 						onPick={(p) => {
 							setAddError(null);
 							setAdding(null);
 							setAddingCustom(false);
 							setEditingBedrock(false);
+							setEditingAzure(false);
 							if (p.id === CUSTOM_PROVIDER.id) setAddingCustom(true);
 							else if (p.id === BEDROCK_PROVIDER.id) setEditingBedrock(true);
+							else if (p.id === AZURE_PROVIDER.id) setEditingAzure(true);
 							else setAdding(p);
 						}}
 					/>

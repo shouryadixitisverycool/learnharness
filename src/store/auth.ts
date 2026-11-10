@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { AUTH_FILE } from "../../config.ts";
 import type { AuthStore } from "../core/ports.ts";
-import { BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
+import { AZURE_PROVIDER, BEDROCK_PROVIDER, CUSTOM_PROVIDER } from "../core/auth-keys.ts";
 import { CUSTOM_AUTH_BINDING, parseCustomAuthBinding, type CustomAuthBinding } from "../core/custom-provider-auth.ts";
 import { writeFileAtomicSync } from "./atomic-write.ts";
 
@@ -82,6 +82,7 @@ function readCustomMap(): Record<string, unknown> {
 function assertOrdinaryVar(name: string): void {
 	if (name === CUSTOM_AUTH_BINDING || name === CUSTOM_PROVIDER.envVar) throw new Error("Use the custom endpoint editor");
 	if (name === BEDROCK_PROVIDER.envVar) throw new Error("Use the Amazon Bedrock editor");
+	if (name === AZURE_PROVIDER.envVar) throw new Error("Use the Azure OpenAI editor");
 }
 /** One immutable file snapshot. Keyless callers never invoke fileKey(). */
 export function readCustomAuth() {
@@ -113,5 +114,22 @@ export function writeBedrockFileKey(key: string | undefined): void {
 	const map = readCustomMap();
 	if (key === undefined) delete map[BEDROCK_PROVIDER.envVar];
 	else map[BEDROCK_PROVIDER.envVar] = key;
+	writeMap(map);
+}
+
+/** The Azure OpenAI key from the file (strict read, like Bedrock's).
+ * Undefined when absent. */
+export function readAzureFileKey(): string | undefined {
+	const value = readCustomMap()[AZURE_PROVIDER.envVar];
+	if (value === undefined) return undefined;
+	if (typeof value !== "string") throw new Error("Invalid Azure credential record");
+	return value;
+}
+/** Set (string) or remove (undefined) the Azure key in one atomic write.
+ * Never reflected into process.env; server/azure-provider.ts reads it. */
+export function writeAzureFileKey(key: string | undefined): void {
+	const map = readCustomMap();
+	if (key === undefined) delete map[AZURE_PROVIDER.envVar];
+	else map[AZURE_PROVIDER.envVar] = key;
 	writeMap(map);
 }
