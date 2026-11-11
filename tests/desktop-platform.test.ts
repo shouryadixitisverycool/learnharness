@@ -55,6 +55,7 @@ describe("desktop development startup", () => {
 			webContents = { on() {}, setWindowOpenHandler() {} };
 			loadURL(url: string) { loaded.push(url); }
 			once() {}
+			on() {}
 		}
 		const electron = {
 			app: {
@@ -65,7 +66,7 @@ describe("desktop development startup", () => {
 			nativeTheme: { themeSource: "system" },
 			Menu: { buildFromTemplate() {}, setApplicationMenu() {} },
 			ipcMain: { handle() {}, on() {} },
-			session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {} } },
+			session: { defaultSession: { setPermissionRequestHandler() {}, setPermissionCheckHandler() {}, getUserAgent: () => "Electron", setUserAgent() {} } },
 		};
 		const context = {
 			require: (id: string) => {
@@ -105,7 +106,7 @@ describe("desktop appearance boot and IPC", () => {
 			background: string | undefined;
 			overlay: unknown;
 			constructor(readonly options: { backgroundColor: string; titleBarOverlay: unknown }) { windows.push(this); }
-			loadURL() {} once() {} isDestroyed() { return false; }
+			loadURL() {} once() {} on() {} isDestroyed() { return false; }
 			setBackgroundColor(color: string) { this.background = color; }
 			setTitleBarOverlay(colors: unknown) { this.overlay = colors; }
 		}
