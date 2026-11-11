@@ -149,6 +149,7 @@ test("removes saved API keys and other secret-like variables from the test envir
   const f = await fixture(t);
   const injected = {
     FIXTURE_API_KEY: "key", HF_TOKEN: "token", fixture_secret: "secret", DB_PASSWORD_FILE: "password",
+    AWS_BEARER_TOKEN_BEDROCK: "bedrock", AWS_ACCESS_KEY_ID: "id",
     FIXTURE_TOOLCHAIN_HOME: "/opt/toolchain", FIXTURE_KEYBOARD: "kept",
   };
   for (const [name, value] of Object.entries(injected)) {
@@ -161,6 +162,7 @@ test("removes saved API keys and other secret-like variables from the test envir
   assert.equal(result.status, "passed");
   assert.deepEqual(JSON.parse(result.stdout), {
     FIXTURE_API_KEY: null, HF_TOKEN: null, fixture_secret: null, DB_PASSWORD_FILE: null,
+    AWS_BEARER_TOKEN_BEDROCK: null, AWS_ACCESS_KEY_ID: null,
     FIXTURE_TOOLCHAIN_HOME: "/opt/toolchain", FIXTURE_KEYBOARD: "kept",
   });
 });

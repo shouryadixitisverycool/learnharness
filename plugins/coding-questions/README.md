@@ -10,10 +10,16 @@ native **conclude** tool assesses and closes the problem.
 test command and test code under **Tests that will run on this computer** and must tick
 **Run these tests on my computer when I submit**; Submit stays disabled until then.
 Teacher test code and learner code then run with LearnHarness's user permissions: they
-can access files, network, and installed programs. Environment variables whose names
-end in `_KEY`, `_TOKEN` or `_SECRET`, or contain `PASSWORD`, are removed, so saved API
-keys are not in the test environment. A temporary working directory, timeout, and output
-limits are operational safeguards, not security isolation. Approve only tests you understand.
+can access files, network, and installed programs. Environment variables with `_KEY`,
+`_TOKEN` or `_SECRET` as a name part (at the end or followed by `_`), or containing
+`PASSWORD`, are removed, so saved API keys are not in the test environment. A temporary
+working directory, timeout, and output limits are operational safeguards, not security
+isolation. Approve only tests you understand.
+
+On a self-hosted server, "this computer" is the server: the tests run there (inside the
+container with Docker) as the server's user, and can read its data directory, including
+`auth.json` with the saved provider keys. The server image ships Node.js only, so tests
+for other languages have no runtime there.
 
 ## Core plugin and requirements
 

@@ -5,7 +5,9 @@ import type { CodingTestResult, CodingTests } from "./test-result.ts";
 
 const TIMEOUT_MS = 30_000;
 const OUTPUT_LIMIT = 64 * 1024;
-const SECRET_NAME = /(?:_KEY|_TOKEN|_SECRET)$|PASSWORD/i;
+// _KEY/_TOKEN/_SECRET as a whole name part, so AWS_ACCESS_KEY_ID and
+// AWS_BEARER_TOKEN_BEDROCK (the Bedrock provider key) go too.
+const SECRET_NAME = /(?:_KEY|_TOKEN|_SECRET)(?:_|$)|PASSWORD/i;
 
 /** The app environment without saved API keys or other secret-like variables. */
 export function testEnvironment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
