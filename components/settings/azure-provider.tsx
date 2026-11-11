@@ -129,13 +129,13 @@ export function AzureEditor({ status, onSaved, onCancel }: { status: AzureStatus
 				)}
 				<button type="button" data-testid="azure-cancel" disabled={Boolean(busy)} onClick={onCancel} className={`${actionClass} text-muted-foreground/70 hover:text-foreground`}>Cancel</button>
 				{configured && (
-					<button type="button" data-testid="azure-remove" disabled={Boolean(busy)} onClick={() => void run("remove", {}, "DELETE")} className={`${actionClass} text-muted-foreground/70 hover:text-red-500`}>
+					<button type="button" data-testid="azure-remove" disabled={Boolean(busy)} onClick={() => void run("remove", {}, "DELETE")} className={`${actionClass} text-muted-foreground/70 hover:text-error`}>
 						{busy === "remove" ? "Removing…" : "Remove"}
 					</button>
 				)}
 				<a href={API_KEY_DOCS} target="_blank" rel="noreferrer" className="ml-auto text-[11px] text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline">Azure endpoint and keys ↗</a>
 			</div>
-			{error && <p role="alert" data-testid="azure-error" className="text-xs text-red-500">{error}</p>}
+			{error && <p role="alert" data-testid="azure-error" className="text-xs text-error">{error}</p>}
 			{configured && status && status.models.length > 0 && (
 				<div className="flex flex-col gap-1" data-testid="azure-models">
 					<p className="text-[11px] text-muted-foreground">{status.models.length} deployments on {endpointHost(endpoint0)}</p>

@@ -6,7 +6,7 @@ import { serverExecute } from "../tool-execute.ts";
 
 /** Claude models get the output tool (their plain text may be summarized
  *  into thinking). Matches Claude across providers (including OpenRouter),
- *  not the API transport. The side agent (/btw) uses this directly. */
+ *  not the API transport. The side-chat agent uses this directly. */
 export function needsSendToUser(model: { provider: string; id: string }): boolean {
 	return model.provider === CLAUDE_CODE_PROVIDER || model.id.toLowerCase().includes("claude");
 }

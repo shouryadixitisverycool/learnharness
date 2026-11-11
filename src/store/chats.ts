@@ -13,7 +13,7 @@ import { createHash } from "node:crypto";
 import { PATHS } from "../../config.ts";
 import { emit } from "../core/events.ts";
 import type { ChatStore } from "../core/ports.ts";
-import type { AttachmentRecord, ChatRecord, ChatSettings, ChatSummary, ExtractionRunUsage, ImageSnapshot, PlanTree, TurnUsage } from "../core/contracts.ts";
+import type { AttachmentRecord, ChatRecord, ChatSettings, ChatSummary, ExtractionRunUsage, ImageSnapshot, PlanTree, SideChatThread, TurnUsage } from "../core/contracts.ts";
 import { CURRENT_CHAT_VERSION, titleFromPrompt } from "../core/contracts.ts";
 import type { LhMessage } from "../core/native-messages.ts";
 import { activeProblemOf, danglingQuestionOf } from "../core/native-messages.ts";
@@ -22,7 +22,7 @@ import { removeLeftoverTemps, writeFileAtomicSync } from "./atomic-write.ts";
 
 function chatFile(id: string): string {
 	if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error(`Invalid chat id: ${id}`);
-	return path.join(PATHS.chats, `${id}.json`);
+	return path.join(/* turbopackIgnore: true */ PATHS.chats, `${id}.json`);
 }
 
 /** THE SILENCE LAW (push S6, 2026-10-02): chats-changed announces ONLY
@@ -65,7 +65,7 @@ function writeChat(record: ChatRecord): void {
 function getChat(id: string): ChatRecord | null {
 	let parsed: unknown;
 	try {
-		parsed = JSON.parse(fs.readFileSync(chatFile(id), "utf-8"));
+		parsed = JSON.parse(fs.readFileSync(/* turbopackIgnore: true */ chatFile(id), "utf-8"));
 	} catch {
 		return null;
 	}
@@ -84,14 +84,14 @@ function getChat(id: string): ChatRecord | null {
 function summaryOf(id: string): ChatSummary | null {
 	const record = getChat(id);
 	if (!record) return null;
-	const { messages, tree, turns, extractions, imageSnapshots: _imageSnapshots, ...summary } = record;
+	const { messages, tree, turns, extractions, imageSnapshots: _imageSnapshots, sideChats: _sideChats, ...summary } = record;
 	// Per-record isolation (Wave B): a record whose messages fail the
 	// projection (e.g. pre-Wave-B UIMessage-format scratch — the
 	// zero-back-compat wipe makes these "corrupt") must not blank the
 	// whole sidebar — same isolation getChat's per-file catch gives.
 	try {
 		return {
-			// turns, extractions and image snapshots stay out of the list payload (list =
+			// turns, extractions, image snapshots and side chats stay out of the list payload (list =
 			// summaries; usage aggregates ride the full record, the picker
 			// never needs them).
 			...summary,
@@ -177,14 +177,14 @@ function derive<T>(id: string, key: string, compute: (record: Readonly<ChatRecor
 function listChats(): ChatSummary[] {
 	try {
 		fs.mkdirSync(PATHS.chats, { recursive: true });
-		const files = fs.readdirSync(PATHS.chats).filter((f) => f.endsWith(".json"));
+		const files = fs.readdirSync(/* turbopackIgnore: true */ PATHS.chats).filter((f) => f.endsWith(".json"));
 		const present = new Set(files);
 		for (const file of summaryCache.keys()) if (!present.has(file)) summaryCache.delete(file);
 		const summaries: ChatSummary[] = [];
 		for (const file of files) {
 			let signature: string;
 			try {
-				const stat = fs.statSync(path.join(PATHS.chats, file));
+				const stat = fs.statSync(path.join(/* turbopackIgnore: true */ PATHS.chats, file));
 				signature = `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
 			} catch {
 				summaryCache.delete(file);
@@ -215,6 +215,8 @@ function listChats(): ChatSummary[] {
 function saveMessages(id: string, messages: LhMessage[]): void {
 	const record = getChat(id);
 	if (!record) throw new Error(`Chat not found: ${id}`);
+	// Side-delivery watermarks are part of the appended native entries,
+	// so input + updates commit together without mutating thread history.
 	record.messages = messages;
 	record.updatedAt = new Date().toISOString();
 	writeChat(record);
@@ -353,13 +355,13 @@ function referencedAttachmentFiles(): Set<string> {
 	const files = new Set<string>();
 	let names: string[] = [];
 	try {
-		names = fs.readdirSync(PATHS.chats).filter((f) => f.endsWith(".json"));
+		names = fs.readdirSync(/* turbopackIgnore: true */ PATHS.chats).filter((f) => f.endsWith(".json"));
 	} catch {
 		return files;
 	}
 	for (const name of names) {
 		try {
-			const record = JSON.parse(fs.readFileSync(path.join(PATHS.chats, name), "utf-8")) as { attachments?: Array<{ file?: unknown }> };
+			const record = JSON.parse(fs.readFileSync(path.join(/* turbopackIgnore: true */ PATHS.chats, name), "utf-8")) as { attachments?: Array<{ file?: unknown }> };
 			for (const a of record.attachments ?? []) if (typeof a.file === "string") files.add(a.file);
 		} catch {
 			// Unreadable record: nothing to learn from it.
@@ -376,6 +378,21 @@ function saveTree(id: string, tree: PlanTree): void {
 	// Deliberately does NOT bump updatedAt: tree mutations piggyback on the
 	// turn's saveMessages, and sidebar ordering shouldn't churn on tree edits.
 	writeChat(record);
+}
+
+/** Side-question threads (2026-11-02): one synchronous read-modify-write,
+ *  so a concurrent turn's saveMessages (which re-reads the record) never
+ *  loses a thread and a thread write never loses messages. Null when the
+ *  chat is gone (a side answer finishing after session deletion). Silent
+ *  and not conversation activity, like saveSettings. */
+function updateSideChats(id: string, update: (threads: SideChatThread[]) => SideChatThread[]): SideChatThread[] | null {
+	const record = getChat(id);
+	if (!record) return null;
+	const next = update(record.sideChats ?? []);
+	if (next.length > 0) record.sideChats = next;
+	else delete record.sideChats;
+	writeChat(record);
+	return next;
 }
 
 export const chatStore: ChatStore = {
@@ -395,4 +412,5 @@ export const chatStore: ChatStore = {
 	appendTurnUsage,
 	appendExtractionUsage,
 	derive,
+	updateSideChats,
 };

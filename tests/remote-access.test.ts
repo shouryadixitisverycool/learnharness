@@ -19,6 +19,8 @@ import { proxy } from "../proxy.ts";
 
 const env = { LH_SERVER_PASSWORD: "correct horse battery staple", LH_SESSION_SECRET: "s".repeat(48) };
 const origin = "https://lh.example.test";
+// The Docker server runs in browser-only mode, so its name must be allowlisted.
+const served = { ...env, LH_ALLOWED_HOSTS: "lh.example.test" };
 
 async function withEnv(vars: Record<string, string>, fn: () => void | Promise<void>): Promise<void> {
 	const saved = Object.fromEntries(Object.keys(vars).map((k) => [k, process.env[k]]));
@@ -72,7 +74,11 @@ test("public paths and redirect targets", () => {
 });
 
 test("proxy in server mode: pages redirect to login, APIs 401, login flow stays public", async () => {
-	await withEnv(env, () => {
+	await withEnv({ ...served, LH_ALLOWED_HOSTS: "" }, () => {
+		const refused = proxy(new NextRequest(origin + "/api/auth/login", { method: "POST" }));
+		assert.equal(refused.status, 403, "an unlisted host name is refused before sign-in");
+	});
+	await withEnv(served, () => {
 		const page = proxy(new NextRequest(origin + "/chat/abc"));
 		assert.equal(page.status, 307);
 		assert.equal(page.headers.get("location"), origin + "/login?next=%2Fchat%2Fabc");
@@ -136,7 +142,7 @@ test("apps only: browsers are refused before sign-in, the two apps and API token
 	assert(!appsOnlyAllowed(new Headers({ "user-agent": "LearnHarnessiOS" }), appsEnv), "needs a version");
 	assert(appsOnlyAllowed(new Headers({ "user-agent": safariUA }), { LH_APPS_ONLY: "1" }), "needs server mode too");
 
-	await withEnv({ ...env, LH_APPS_ONLY: "1" }, () => {
+	await withEnv({ ...served, LH_APPS_ONLY: "1" }, () => {
 		const page = proxy(new NextRequest(origin + "/login", { headers: { "user-agent": safariUA } }));
 		assert.equal(page.status, 403, "even the sign-in page");
 		assert.equal(proxy(new NextRequest(origin + "/api/chats", { headers: { "user-agent": safariUA } })).status, 403);

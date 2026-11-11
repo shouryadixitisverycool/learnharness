@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useActivity } from "@/components/activity-dock";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
+import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
 import { useSettingsSaved } from "@/components/settings-signal";
 import { getSettingsRecord } from "@/components/settings-record";
 import { formatTokens } from "@/components/usage-format";
 import { Hint } from "@/components/ui/hint";
 import { timeAgo } from "@/components/sidebar";
 import { resolveSettings } from "@/src/core";
-import { MenuShell } from "@/components/menu-shell";
 
 /**
  * The extraction-coverage surfaces (extraction-UX redesign, owner-locked
@@ -245,7 +245,8 @@ export function CoverageRing({ chatId, refreshKey = 0 }: { chatId: string; refre
 	const [open, setOpen] = useState(false);
 	const [nonce, setNonce] = useState(0);
 	const rootRef = useRef<HTMLDivElement>(null);
-	usePopoverDismiss(rootRef, open, () => setOpen(false), '[data-testid="coverage-ring-popover"]');
+	const panelRef = useRef<HTMLDivElement>(null);
+	const popupLayer = usePopoverDismiss(rootRef, open && graph !== null && graph.enabled && coverage !== null, () => setOpen(false), { layerRootRef: panelRef });
 
 	// The activity/refresh chain (the dispatch's seam): runs can fire from
 	// OTHER surfaces (the sidebar menu's Extract, the turn pipeline, another
@@ -316,14 +317,14 @@ export function CoverageRing({ chatId, refreshKey = 0 }: { chatId: string; refre
 				</button>
 			</Hint>
 			{open && (
-				<MenuShell
-					anchorRef={rootRef}
-					testid="coverage-ring-popover"
-					preferredSide="down"
-					menuClass="w-64 rounded-xl border bg-card p-3 text-xs shadow-xl"
+				<div
+					ref={panelRef}
+					data-testid="coverage-ring-popover"
+					style={{ zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }}
+					className="absolute top-full right-0 mt-1.5 w-64 rounded-xl border bg-card p-3 text-xs shadow-xl"
 				>
 					<CoverageRingDetail coverage={coverage} chunkTokens={graph.chunkTokens} />
-				</MenuShell>
+				</div>
 			)}
 		</div>
 	);

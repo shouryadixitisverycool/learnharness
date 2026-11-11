@@ -41,6 +41,7 @@ import {
 	serializeForSummary,
 	toLlmMessages,
 	type CompactionDetails,
+	type ChatRecord,
 	type LhMessage,
 	type LhMarkerMessage,
 } from "../core/index.ts";
@@ -49,6 +50,7 @@ import { emit } from "../core/events.ts";
 import type { ChatStore } from "../core/ports.ts";
 import type { PiEngine } from "../agent/models.ts";
 import { runSubagent } from "../agent/subagents/pi-run.ts";
+import { isTurnRunning } from "./turn-liveness.ts";
 
 /** The summarizer's system prompt — server-owned operational framing,
  *  not model-facing doctrine (buildCompactionPrompt carries the shape). */
@@ -80,6 +82,8 @@ async function subagentSummarizer(prompt: string, engine: PiEngine): Promise<{ s
 		engine,
 		systemPrompt: SUMMARIZER_SYSTEM_PROMPT,
 		maxTurns: 1,
+		// Operational work for the foreground conversation, not a worker task.
+		bypassWorkerRequestAdmission: true,
 		onUsage: (u) => {
 			usage = u;
 		},
@@ -110,9 +114,14 @@ export interface CompactionDeps {
 	 *  effective-trigger ruling. The catalog window lookup is the
 	 *  caller's (chat-handler has the model id at hand). */
 	thresholdTokens: number;
+	/** Opt-in reasoning accounting; absent/false uses the original heuristic. */
+	includeReasoning?: boolean;
 	/** The composed system prompt's token estimate (chars/4) — the
 	 *  projection the provider actually receives starts with it. */
 	systemPromptTokens: number;
+	/** Trigger against a prospective request without recording/summarizing
+	 * its new cargo. The cut and summary still use only saved history. */
+	projectMessages?: (record: ChatRecord) => readonly LhMessage[];
 	/** Injectable summarizer (tests); default = the sub-agent one-shot. */
 	summarize?: Summarizer;
 }
@@ -161,9 +170,10 @@ export function effectiveThresholdTokens(settingTokens: number | undefined, cont
  *  marker (that usage described context the next request will NOT
  *  carry), so the fallback path runs the plain heuristic over the
  *  CUT-HONORED projection (never the dropped span) plus the additive
- *  prompt term the anchor would have covered. */
-export function projectedContextTokens(messages: readonly LhMessage[], systemPromptTokens: number): number {
-	return withSystemPrompt(contextProjection(messages), systemPromptTokens);
+ *  prompt term the anchor would have covered. Supplying a model opts into
+ *  reasoning-aware estimates; the service supplies it only when enabled. */
+export function projectedContextTokens(messages: readonly LhMessage[], systemPromptTokens: number, model?: PiEngine["model"]): number {
+	return withSystemPrompt(contextProjection(messages, model), systemPromptTokens);
 }
 
 /** The part of the projection that depends on the messages alone: the
@@ -171,21 +181,29 @@ export function projectedContextTokens(messages: readonly LhMessage[], systemPro
  *  needs the prompt term added. */
 type ContextProjection = { anchored: number } | { heuristic: number };
 
-function contextProjection(messages: readonly LhMessage[]): ContextProjection {
-	const est = estimateContextTokens(messages);
+function contextProjection(messages: readonly LhMessage[], model?: PiEngine["model"]): ContextProjection {
+	const est = estimateContextTokens(messages, model);
 	if (est.lastUsageIndex !== null) return { anchored: est.tokens };
-	return { heuristic: estimateTokens(toLlmMessages(messages as readonly AgentMessage[]) as unknown as readonly LhMessage[]) };
+	return { heuristic: estimateTokens(toLlmMessages(messages as readonly AgentMessage[]) as unknown as readonly LhMessage[], model) };
 }
 
 function withSystemPrompt(projection: ContextProjection, systemPromptTokens: number): number {
 	return "anchored" in projection ? projection.anchored : projection.heuristic + systemPromptTokens;
 }
 
-/** The gate checks' projection of the record on disk, remembered per file
- *  version (ChatStore.derive); null when the chat is gone. */
-function projectedRecordTokens(chatStore: ChatStore, chatId: string, systemPromptTokens: number): number | null {
-	const projection = deriveChat(chatStore, chatId, "context-projection", (record) => contextProjection(record.messages));
-	return projection === null ? null : withSystemPrompt(projection, systemPromptTokens);
+/** The gate checks' projection of the record on disk; null when the chat
+ *  is gone. Remembered per file version and estimate model
+ *  (ChatStore.derive), except when the caller projects pending input
+ *  (projectMessages): that result depends on more than the record. */
+function projectedRecordTokens(deps: CompactionDeps, chatId: string): number | null {
+	const model = deps.includeReasoning ? deps.engine.model : undefined;
+	if (deps.projectMessages) {
+		const record = deps.chatStore.getChat(chatId);
+		return record ? projectedContextTokens(deps.projectMessages(record), deps.systemPromptTokens, model) : null;
+	}
+	const key = model ? `context-projection:${model.provider}:${model.id}` : "context-projection";
+	const projection = deriveChat(deps.chatStore, chatId, key, (record) => contextProjection(record.messages, model));
+	return projection === null ? null : withSystemPrompt(projection, deps.systemPromptTokens);
 }
 
 // ─── the compaction run ─────────────────────────────────────────────────────
@@ -195,13 +213,20 @@ function projectedRecordTokens(chatStore: ChatStore, chatId: string, systemPromp
  *  appends the marker, records usage, notifies. Never throws upward
  *  past the registry cleanup. */
 async function compact(deps: CompactionDeps, chatId: string): Promise<void> {
+	// The actual start seam, shared by preflight, background, and manual
+	// callers. An earlier request check is insufficient: a competing answer
+	// may claim ownership while ensureCompacted awaits the structural gate.
+	// There is no await between this check and starting the summary; an
+	// already-running compaction is still awaited by every preflight.
+	if (isTurnRunning(chatId)) return;
 	const record = deps.chatStore.getChat(chatId);
 	if (!record) return;
 	const messages = record.messages;
-	const tokensBefore = projectedContextTokens(messages, deps.systemPromptTokens);
+	const model = deps.includeReasoning ? deps.engine.model : undefined;
+	const tokensBefore = projectedContextTokens(deps.projectMessages?.(record) ?? messages, deps.systemPromptTokens, model);
 	if (tokensBefore <= deps.thresholdTokens) return; // settled beneath while we waited
 
-	const cut = compactionCutIndex(messages);
+	const cut = compactionCutIndex(messages, undefined, model);
 	if (cut <= 0 || cut >= messages.length) return; // no history can be dropped
 
 	// The previous compaction's kept boundary (chained compactions
@@ -304,17 +329,28 @@ export async function ensureCompacted(deps: CompactionDeps, chatId: string): Pro
 	// injected summarizer.
 	if (process.env.NODE_ENV === "test" && !deps.summarize) return;
 	await awaitCompaction(chatId);
+	// Another fresh preflight may have started a summary after our initial
+	// structural check. Join it BEFORE any eligibility/threshold early exit:
+	// those checks govern new runs, never permission to bypass a live one.
+	const concurrent = state().inFlight.get(chatId);
+	if (concurrent) {
+		await concurrent;
+		return;
+	}
 	if (deps.canStart?.() === false) return;
-	const projected = projectedRecordTokens(deps.chatStore, chatId, deps.systemPromptTokens);
-	if (projected === null) return;
-	if (projected <= deps.thresholdTokens) return;
-	if (state().inFlight.has(chatId)) return; // a concurrent caller started it while we awaited
+	const projected = projectedRecordTokens(deps, chatId);
+	if (projected === null || projected <= deps.thresholdTokens) return;
+	const admitted = state().inFlight.get(chatId);
+	if (admitted) {
+		await admitted;
+		return;
+	}
 	const run = compact(deps, chatId);
 	state().inFlight.set(chatId, run);
 	try {
 		await run;
 	} finally {
-		state().inFlight.delete(chatId);
+		if (state().inFlight.get(chatId) === run) state().inFlight.delete(chatId);
 	}
 }
 
@@ -330,10 +366,11 @@ export function kickCompaction(buildDeps: () => CompactionDeps | null, chatId: s
 	if (state().inFlight.has(chatId)) return;
 	const deps = buildDeps();
 	if (!deps || deps.canStart?.() === false) return;
-	const projected = projectedRecordTokens(deps.chatStore, chatId, deps.systemPromptTokens);
-	if (projected === null) return;
-	if (projected <= deps.thresholdTokens) return;
+	const projected = projectedRecordTokens(deps, chatId);
+	if (projected === null || projected <= deps.thresholdTokens) return;
 	const run = compact(deps, chatId);
 	state().inFlight.set(chatId, run);
-	void run.finally(() => state().inFlight.delete(chatId));
+	void run.finally(() => {
+		if (state().inFlight.get(chatId) === run) state().inFlight.delete(chatId);
+	});
 }

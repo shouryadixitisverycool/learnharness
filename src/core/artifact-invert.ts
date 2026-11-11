@@ -14,8 +14,8 @@
  * Pure, browser-safe (the cards and the artifact-ui route share it).
  */
 
-// The palette the app is rendering (appearance-palette.ts owns the type).
-import type { RenderedMode } from "./appearance-palette.ts";
+// The palette the app is rendering (themes.ts owns the type).
+import type { RenderedMode } from "./themes.ts";
 
 /** Whether an artifact was drawn light — measured in the browser. */
 export type ArtifactTone = "light" | "dark" | "unknown";

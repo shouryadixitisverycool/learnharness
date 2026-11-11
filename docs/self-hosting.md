@@ -94,6 +94,13 @@ cookie would travel unencrypted. Pick one:
   gets a certificate automatically. Keep SSE unbuffered (Caddy does this by
   default; for nginx set `proxy_buffering off` on `/api/`).
 
+Whichever you pick, put the host name in `LH_ALLOWED_HOSTS` in `.env.server`
+(`LH_ALLOWED_HOSTS=<tailscale-name>`, or `your.domain`). The API only answers
+`localhost`, IP addresses and the names listed there, which blocks DNS
+rebinding; any other name gets 403 "This host name is not allowed", sign-in
+included. Browser writes must also come from the page's own origin, so open
+the app at the same address the proxy forwards as `Host`.
+
 ## Data and backups
 
 Everything lives in the `learnharness-data` Docker volume (`/data` in the
@@ -111,8 +118,8 @@ into the volume, plus `LearnHarness/auth.json` if you want your keys there too.
 ## Without Docker
 
 ```bash
-npm ci && npx next build && node scripts/build-server.mjs
-LH_SERVER_PASSWORD=... LH_DATA_DIR=/srv/learnharness LH_AUTH_FILE=/srv/learnharness/auth.json \
+npm ci && npm run plugins:setup && npm run build && node scripts/build-server.mjs
+LH_SERVER_PASSWORD=... LH_ALLOWED_HOSTS=your.domain LH_DATA_DIR=/srv/learnharness LH_AUTH_FILE=/srv/learnharness/auth.json \
   HOSTNAME=127.0.0.1 PORT=3000 node .next/standalone/server.js
 ```
 

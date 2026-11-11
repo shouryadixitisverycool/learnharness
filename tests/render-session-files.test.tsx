@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { AttachmentChips, SessionFilesControl } from "../components/attachments.tsx";
+import { InteractionLayersProvider } from "../components/interaction-layers.tsx";
 import type { AttachmentRecord } from "../src/core/contracts.ts";
 
 /**
@@ -38,14 +39,16 @@ const figure: AttachmentRecord = {
 describe("session files panel", () => {
 	it("lists active files with Remove, removed files with Undo, and highlights the chip's file", () => {
 		const html = renderToStaticMarkup(
-			<SessionFilesControl
-				chatId="chat_1"
-				attachments={[book, figure]}
-				setAttachments={() => {}}
-				open
-				onOpenChange={() => {}}
-				highlightId={book.id}
-			/>,
+			<InteractionLayersProvider>
+				<SessionFilesControl
+					chatId="chat_1"
+					attachments={[book, figure]}
+					setAttachments={() => {}}
+					open
+					onOpenChange={() => {}}
+					highlightId={book.id}
+				/>
+			</InteractionLayersProvider>,
 		);
 		assert.match(html, /Files · 1/);
 		assert.match(html, /aria-label="Remove mechanics\.epub"/);

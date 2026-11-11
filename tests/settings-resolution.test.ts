@@ -20,9 +20,22 @@ import {
 	resolveSideQuestionSpec,
 	resolveSlot,
 } from "../src/core/settings-resolution.ts";
-import { BACKGROUND_MODEL_ROLES, type UserSettings } from "../src/core/settings.ts";
+import { BACKGROUND_MODEL_ROLES, sanitizeUserSettings, type UserSettings } from "../src/core/settings.ts";
 
 describe("resolveSettings", () => {
+	it("worker concurrency defaults to 8, honors overrides, and returns to 8 after invalid disk values drop", () => {
+		for (const record of [null, { version: 1 }, { version: 1, agent: {} }]) {
+			assert.equal(resolveSettings(record).agent.workerRequestConcurrency, 8);
+		}
+		for (const value of [1, 17, Number.MAX_SAFE_INTEGER]) {
+			assert.equal(resolveSettings({ version: 1, agent: { workerRequestConcurrency: value } }).agent.workerRequestConcurrency, value);
+		}
+		for (const value of [0, 1.5, "8", null, Number.MAX_SAFE_INTEGER + 1]) {
+			const record = sanitizeUserSettings({ version: 1, agent: { workerRequestConcurrency: value } });
+			assert.equal(resolveSettings(record).agent.workerRequestConcurrency, 8);
+		}
+	});
+
 	it("null record (first boot): non-model knobs land on factory defaults; every model view is EMPTY", () => {
 		const eff = resolveSettings(null);
 		assert.deepEqual(eff.general, { autoUpdate: true });
@@ -37,9 +50,9 @@ describe("resolveSettings", () => {
 		assert.equal(eff.models.strong, null);
 		assert.equal(eff.models.cheap, null);
 		assert.equal(eff.models.vision, null);
-		assert.equal(eff.appearance.mode, "dark");
+		assert.equal(eff.appearance.theme, "default");
 		assert.equal(eff.appearance.background, null);
-		assert.equal(eff.appearance.lightBackground, null);
+		assert.deepEqual(eff.appearance.colors, {});
 		assert.equal(eff.appearance.fontFamily, null);
 		assert.equal(eff.appearance.proseFontSize, 16);
 		assert.equal(eff.appearance.sessionNameSerif, true);
@@ -60,7 +73,7 @@ describe("resolveSettings", () => {
 				prompts: { "system-prompt.md": true },
 				search: { engine: "tavily" },
 			},
-			appearance: { mode: "system", lightBackground: "#eeeeee", proseFontSize: 20, mdRendering: { headingWeight: 600 } },
+			appearance: { theme: "rose-pine-dawn", colors: { warning: "#eeeeee" }, proseFontSize: 20, mdRendering: { headingWeight: 600 } },
 			graph: { enabled: false },
 		};
 		const eff = resolveSettings(record);
@@ -75,8 +88,8 @@ describe("resolveSettings", () => {
 		assert.deepEqual(eff.agent.search, { engine: "tavily" });
 		assert.deepEqual(eff.agent.tools, { research: false });
 		assert.deepEqual(eff.agent.prompts, { "system-prompt.md": true });
-		assert.equal(eff.appearance.mode, "system");
-		assert.equal(eff.appearance.lightBackground, "#eeeeee");
+		assert.equal(eff.appearance.theme, "rose-pine-dawn");
+		assert.deepEqual(eff.appearance.colors, { warning: "#eeeeee" });
 		assert.equal(eff.appearance.proseFontSize, 20);
 		assert.equal(eff.appearance.mdRendering.headingWeight, 600);
 		// wave 7 collapse: the section IS the master switch (absent budget
