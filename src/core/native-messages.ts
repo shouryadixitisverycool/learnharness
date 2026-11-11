@@ -101,7 +101,7 @@ declare module "@earendil-works/pi-agent-core" {
 }
 
 /** A record message: a native pi message (or our marker) plus the record id.
- *  `attachmentIds` (learner user messages only, 2026-10-29) names the
+ *  `attachmentIds` (learner user messages only) names the
  *  session attachments sent with that message — ids, never bytes; images
  *  expand at the wire (toLlmMessages' attachmentParts hook). */
 export type LhMessage = (UserMessage | AssistantMessage | ToolResultMessage | LhMarkerMessage) & {

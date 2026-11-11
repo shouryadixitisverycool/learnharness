@@ -94,7 +94,7 @@ timestamp: number;
 Supporting declaration used by a public type. This is not an additional runtime API or SDK helper.
 
 A record message: a native pi message (or our marker) plus the record id.
-`attachmentIds` (learner user messages only, 2026-10-29) names the
+`attachmentIds` (learner user messages only) names the
 session attachments sent with that message — ids, never bytes; images
 expand at the wire (toLlmMessages' attachmentParts hook).
 

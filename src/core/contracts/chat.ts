@@ -45,7 +45,7 @@ export interface ChatRecord {
 	extractions?: ExtractionRunUsage[];
 	/** Per-chat model/thinking overrides for the conversation agents. */
 	settings?: ChatSettings;
-	/** Session context attachments (2026-10-29): files the learner attached
+	/** Session context attachments: files the learner attached
 	 *  from the composer, stored once by content under data/attachments/. The agent
 	 *  sees them through the system prompt's attachments section and reads
 	 *  them on demand — contents never ride the record. Records are never
