@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { CLAUDE_CODE_PROVIDER, sessionCacheHitRate, subscriptionLabels, subscriptionLabel, type cliContextWindowOf, type SessionPricing, type TurnUsage } from "@/src/core";
 import { formatTokens, formatUsd, planCostLabel, prettyModel } from "@/components/usage-format";
 import { ModelControl, catalogLimits, useModelCatalog } from "@/components/model-picker";
 import { usePopoverDismiss } from "@/components/popover-dismiss";
+import { useInteractionLayers } from "@/components/interaction-layers";
 import { INTERACTION_LAYER_Z_BASE } from "@/components/host-dialog";
 
 export function formatContextMeasurement(tokens: number | null, limit: number | null): string {
@@ -80,7 +82,35 @@ export function StatsBar({
 	// stats round 1): close on any pointerdown outside the bar or on Escape.
 	const barRef = useRef<HTMLDivElement>(null);
 	const panelRef = useRef<HTMLDivElement>(null);
-	const popupLayer = usePopoverDismiss(barRef, open && !!(chatId || turns.length), () => setOpen(false), { layerRootRef: panelRef });
+	const summaryRef = useRef<HTMLButtonElement>(null);
+	const interactions = useInteractionLayers();
+	const [detailPos, setDetailPos] = useState<{ left: number; bottom: number } | null>(null);
+	// The panel is portaled out of barRef, so a pointerdown inside it must
+	// still count as inside: it holds a link and a scrolling turn list.
+	const popupLayer = usePopoverDismiss(barRef, open && !!(chatId || turns.length), () => setOpen(false), { layerRootRef: panelRef, layerRootIsInside: true });
+	// The popover renders in a portal: the dock sits inside the Conversation
+	// scroller, whose overflow clips both axes (#610). Centered on the
+	// button, kept 8px inside the window.
+	useLayoutEffect(() => {
+		if (!open) { setDetailPos(null); return; }
+		const place = () => {
+			const rect = summaryRef.current?.getBoundingClientRect();
+			const width = panelRef.current?.offsetWidth;
+			if (!rect || !width) return;
+			const centered = (rect.left + rect.right) / 2 - width / 2;
+			setDetailPos({
+				left: Math.max(8, Math.min(centered, window.innerWidth - 8 - width)),
+				bottom: window.innerHeight - rect.top + 6,
+			});
+		};
+		place();
+		window.addEventListener("resize", place);
+		window.addEventListener("scroll", place, true);
+		return () => {
+			window.removeEventListener("resize", place);
+			window.removeEventListener("scroll", place, true);
+		};
+	}, [open]);
 	// The picker reports its effective selection. CLI windows are session-
 	// scoped; unknown metadata always means usage-only, never a guessed maximum.
 	const { catalog } = useModelCatalog();
@@ -105,8 +135,8 @@ export function StatsBar({
 			// control wave caught this live: buttons rendered, clicks never landed).
 			className="lh-stats-bar pointer-events-auto relative flex items-center justify-between gap-3 px-3 pt-2 text-xs text-muted-foreground"
 		>
-			{/* The summary button + its popover: the popover anchors to this
-			    wrapper, CENTERED over the button itself (owner, stats round 2)
+			{/* The summary button + its popover: the popover is CENTERED over
+			    the button itself (owner, stats round 2)
 			    — not over the whole bar row, which made it line up oddly. The
 			    outside-close ref anchors HERE too (owner, round 3): on the whole
 			    bar it wrapped the model control, so clicking model/thinking never
@@ -121,6 +151,7 @@ export function StatsBar({
 				{/* No tooltip — the numbers describe themselves and the popover
 			    speaks on click (owner, subtlety round 2026-09-25). */}
 			<button
+				ref={summaryRef}
 				type="button"
 				onClick={() => setOpen((o) => !o)}
 				aria-expanded={open}
@@ -133,12 +164,12 @@ export function StatsBar({
 				<span aria-hidden>·</span>
 				<span data-testid="stats-cost">{costLabel}</span>
 			</button>
-				{open && (
+				{open && createPortal(
 					<div
 						ref={panelRef}
 						data-testid="stats-detail"
-						style={{ zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }}
-						className="absolute bottom-full left-1/2 mb-1.5 w-72 -translate-x-1/2 rounded-xl border bg-card p-3 text-xs shadow-xl"
+						style={{ ...(detailPos ?? { visibility: "hidden" }), zIndex: INTERACTION_LAYER_Z_BASE + popupLayer.order }}
+						className="fixed w-72 rounded-xl border bg-card p-3 text-xs text-muted-foreground shadow-xl"
 					>
 						<div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
 							Session stats
@@ -194,7 +225,8 @@ export function StatsBar({
 								</ul>
 							</>
 						)}
-					</div>
+					</div>,
+					interactions.getPortalContainer(barRef.current)!,
 				)}
 			</div>
 			)}
