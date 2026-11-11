@@ -13,15 +13,6 @@ import { MalformedQuestion } from "@/components/malformed-question";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { QuestionPreview } from "@/components/question-preview";
 import { mdComponents } from "@/components/md-blocks";
-
-// An option row is a <button>, and Streamdown renders a Markdown link as a
-// <button> (its link-safety prompt). A link inside an option label would nest
-// a button in a button, which is invalid HTML. Options are for picking, not
-// for following links, so show link text as plain text.
-const optionMdComponents = {
-	...mdComponents,
-	a: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
-};
 import { cn } from "@/lib/utils";
 import {
 	buildAnswer,
@@ -54,6 +45,19 @@ import {
 } from "@/src/core";
 import type { PrepareBuiltinSubmission } from "./plugin-submission-adapters";
 import { CONFIDENCE_COLORS, confidenceRailStyle } from "@/components/confidence-rail";
+
+// An option row is a <button>, and Streamdown renders a Markdown link as a
+// <button> (its link-safety prompt). A link inside an option label would nest
+// a button in a button, which is invalid HTML. Options are for picking, not
+// for following links, so show link text as plain text. Built on first use:
+// md-blocks imports back into this module, so mdComponents isn't initialized
+// yet while this file loads.
+const buildOptionMdComponents = () => ({
+	...mdComponents,
+	a: ({ children }: { children?: React.ReactNode }) => <span>{children}</span>,
+});
+let optionMdComponentsCache: ReturnType<typeof buildOptionMdComponents> | undefined;
+const optionMdComponents = () => (optionMdComponentsCache ??= buildOptionMdComponents());
 
 /**
  * The question dock — a pending quiz/ask REPLACES the chat composer: the
@@ -688,7 +692,7 @@ function QuestionDockForm({
 										)}
 									</span>
 									<span>
-										<ToolContentResponse components={optionMdComponents}>{opt.label}</ToolContentResponse>
+										<ToolContentResponse components={optionMdComponents()}>{opt.label}</ToolContentResponse>
 										{kind !== "quiz" && opt.description && (
 											// Option subtext renders in Source Sans 3 (owner's mockup);
 											// the "I don't know" copy stays JetBrains Mono. QUIZ options render
@@ -697,7 +701,7 @@ function QuestionDockForm({
 											// records must not leak either. Same MessageResponse path as the
 											// label (owner, 2026-10-12): descriptions are full markdown —
 											// LaTeX included — not plain text.
-											<ToolContentResponse components={optionMdComponents} className="lh-prose block text-xs text-muted-foreground">
+											<ToolContentResponse components={optionMdComponents()} className="lh-prose block text-xs text-muted-foreground">
 												{opt.description}
 											</ToolContentResponse>
 										)}
