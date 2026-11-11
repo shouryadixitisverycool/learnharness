@@ -145,13 +145,13 @@ export function BedrockEditor({ status, onSaved, onCancel }: { status: BedrockSt
 				)}
 				<button type="button" data-testid="bedrock-cancel" disabled={Boolean(busy)} onClick={onCancel} className={`${actionClass} text-muted-foreground/70 hover:text-foreground`}>Cancel</button>
 				{configured && (
-					<button type="button" data-testid="bedrock-remove" disabled={Boolean(busy)} onClick={() => void run("remove", {}, "DELETE")} className={`${actionClass} text-muted-foreground/70 hover:text-red-500`}>
+					<button type="button" data-testid="bedrock-remove" disabled={Boolean(busy)} onClick={() => void run("remove", {}, "DELETE")} className={`${actionClass} text-muted-foreground/70 hover:text-error`}>
 						{busy === "remove" ? "Removing…" : "Remove"}
 					</button>
 				)}
 				<a href={API_KEY_DOCS} target="_blank" rel="noreferrer" className="ml-auto text-[11px] text-muted-foreground/70 underline-offset-2 hover:text-foreground hover:underline">Get a Bedrock API key ↗</a>
 			</div>
-			{error && <p role="alert" data-testid="bedrock-error" className="text-xs text-red-500">{error}</p>}
+			{error && <p role="alert" data-testid="bedrock-error" className="text-xs text-error">{error}</p>}
 			{configured && status && status.models.length > 0 && (
 				<div className="flex flex-col gap-1" data-testid="bedrock-models">
 					<p className="text-[11px] text-muted-foreground">{status.models.length} models available in {region0}</p>
@@ -162,7 +162,7 @@ export function BedrockEditor({ status, onSaved, onCancel }: { status: BedrockSt
 									<span className="block truncate text-xs text-foreground">{m.name}</span>
 									<span className="block truncate font-mono text-[10px] text-muted-foreground" title={m.id}>{m.id}</span>
 								</span>
-								{!m.accessConfirmed && <span className="shrink-0 text-[10px] text-amber-600 dark:text-amber-400" data-testid="bedrock-access-unconfirmed">access not confirmed</span>}
+								{!m.accessConfirmed && <span className="shrink-0 text-[10px] text-warning" data-testid="bedrock-access-unconfirmed">access not confirmed</span>}
 							</li>
 						))}
 					</ul>

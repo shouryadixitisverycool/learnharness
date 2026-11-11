@@ -44,7 +44,7 @@ export function suspendWhileLeaving(
 	target: Suspendable,
 	{
 		subscribe = onRouteTransitionStart,
-		pageHref = window.location.href,
+		pageHref = window.location?.href ?? "",
 		backstopMs = 5000,
 	}: {
 		subscribe?: (listener: (url: string) => void) => () => void;

@@ -33,7 +33,7 @@ export function attachmentsRoot(): string {
 /** Absolute path of one blob, by its stored name. */
 export function blobPath(file: string): string {
 	if (!BLOB_PATTERN.test(file)) throw new Error(`Invalid attachment blob: ${file}`);
-	return path.join(PATHS.attachments, file);
+	return path.join(/* turbopackIgnore: true */ PATHS.attachments, file);
 }
 
 /** Store the bytes under their content hash; returns the blob name. An

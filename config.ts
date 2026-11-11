@@ -14,9 +14,12 @@ export const ROOT = path.dirname(fileURLToPath(import.meta.url));
  * byte-for-byte as before. Read-only assets (prompts) stay ROOT-anchored
  * on purpose: they ship inside the app bundle by design.
  */
+// Mutable runtime paths are not deployment assets. Turbopack analyzes each
+// path-producing call independently, so derived paths need their own opt-out.
+// Keep ROOT/teacherPrompt traceable: read-only shipped assets still belong.
 const DATA_ROOT = process.env.LH_DATA_DIR
-	? path.resolve(process.env.LH_DATA_DIR)
-	: path.join(ROOT, "data");
+	? path.resolve(/* turbopackIgnore: true */ process.env.LH_DATA_DIR)
+	: path.join(/* turbopackIgnore: true */ ROOT, "data");
 
 export const PATHS = {
 	root: ROOT,
@@ -24,15 +27,15 @@ export const PATHS = {
 	teacherPrompt: path.join(ROOT, "src", "agent", "system-prompt.md"),
 	data: DATA_ROOT,
 	/** Chat sessions (AI SDK UIMessage transcripts, one JSON file per chat). */
-	chats: path.join(DATA_ROOT, "chats"),
+	chats: path.join(/* turbopackIgnore: true */ DATA_ROOT, "chats"),
 	/** Session attachments: content-addressed blobs, data/attachments/<sha256><ext>. */
-	attachments: path.join(DATA_ROOT, "attachments"),
-	graph: path.join(DATA_ROOT, "graph"),
+	attachments: path.join(/* turbopackIgnore: true */ DATA_ROOT, "attachments"),
+	graph: path.join(/* turbopackIgnore: true */ DATA_ROOT, "graph"),
 	/** Study time (src/store/study.ts): intervals.jsonl history + open.json timers. */
-	study: path.join(DATA_ROOT, "study"),
+	study: path.join(/* turbopackIgnore: true */ DATA_ROOT, "study"),
 	/** Debug artifacts (env-gated): data/debug/provider-events/<chatId>.jsonl
 	 * raw provider stream recordings (src/agent/provider-events.ts). */
-	debug: path.join(DATA_ROOT, "debug"),
+	debug: path.join(/* turbopackIgnore: true */ DATA_ROOT, "debug"),
 } as const;
 
 // ─── Models ────────────────────────────────────────────────────────────────
@@ -61,8 +64,8 @@ export type ModelRole =
 
 /** Study-time files: the append-only history and the open-timer working state. */
 export const STUDY_FILES = {
-	intervals: path.join(PATHS.study, "intervals.jsonl"),
-	open: path.join(PATHS.study, "open.json"),
+	intervals: path.join(/* turbopackIgnore: true */ PATHS.study, "intervals.jsonl"),
+	open: path.join(/* turbopackIgnore: true */ PATHS.study, "open.json"),
 } as const;
 
 /**
@@ -71,13 +74,13 @@ export const STUDY_FILES = {
  * TRUTH (owner, 2026-09-30): edges are a derived view, never stored.
  */
 export const LEDGER_FILES = {
-	nodes: path.join(PATHS.graph, "nodes.jsonl"),
-	chains: path.join(PATHS.graph, "chains.jsonl"),
-	sessions: path.join(PATHS.graph, "sessions.jsonl"),
+	nodes: path.join(/* turbopackIgnore: true */ PATHS.graph, "nodes.jsonl"),
+	chains: path.join(/* turbopackIgnore: true */ PATHS.graph, "chains.jsonl"),
+	sessions: path.join(/* turbopackIgnore: true */ PATHS.graph, "sessions.jsonl"),
 	/** Per-message extraction coverage (contracts/graph.ts CoverageEntry;
 	 *  the checkpoint's replacement for chat extractions — notes keep
 	 *  sessions.jsonl, whole-file as they are). */
-	coverage: path.join(PATHS.graph, "coverage.jsonl"),
+	coverage: path.join(/* turbopackIgnore: true */ PATHS.graph, "coverage.jsonl"),
 } as const;
 
 /**
@@ -85,26 +88,26 @@ export const LEDGER_FILES = {
  * record (contracts/graph.ts) — the file path + import time + the run's usage
  * log. Read-modify-write like a chat file, not append-only like the ledgers.
  */
-export const SOURCES_FILE = path.join(PATHS.graph, "sources.json");
+export const SOURCES_FILE = path.join(/* turbopackIgnore: true */ PATHS.graph, "sources.json");
 /** Presentation-only source names/folder placement; never extraction identity. */
-export const SOURCE_ORGANIZATION_FILE = path.join(PATHS.graph, "source-organization.json");
+export const SOURCE_ORGANIZATION_FILE = path.join(/* turbopackIgnore: true */ PATHS.graph, "source-organization.json");
 /** The layout ledger (read-modify-write like sources.json): nodeId →
  *  {x,y} resting positions from the incremental settle (core/layout.ts).
  *  Carries an updatedAt stamp for future live-physics conflict handling. */
-export const POSITIONS_FILE = path.join(PATHS.graph, "positions.json");
+export const POSITIONS_FILE = path.join(/* turbopackIgnore: true */ PATHS.graph, "positions.json");
 
 /**
  * Graph render settings (the settings-panel controls): one small JSON blob,
  * read-modify-write. Shared shape/sanitizer: src/core/render-settings.ts.
  */
-export const RENDER_SETTINGS_FILE = path.join(PATHS.graph, "render-settings.json");
+export const RENDER_SETTINGS_FILE = path.join(/* turbopackIgnore: true */ PATHS.graph, "render-settings.json");
 
 /** The graph-family FORMAT STAMP sidecar (schema-versioning wave,
  *  2026-10-10): one version for the whole family — the four JSONL ledgers,
  *  sources.json, render-settings.json. LAZY v1: absent = v1; the first
  *  graph-family write creates it. positions.json is REBUILDABLE and rides
  *  along unversioned by design (owner ruling). */
-export const GRAPH_FORMAT_FILE = path.join(PATHS.graph, "format.json");
+export const GRAPH_FORMAT_FILE = path.join(/* turbopackIgnore: true */ PATHS.graph, "format.json");
 
 /**
  * THE USER SETTINGS RECORD (settings-storage wave, 2026-09-19): one
@@ -122,7 +125,7 @@ export const GRAPH_FORMAT_FILE = path.join(PATHS.graph, "format.json");
  * with per-session models, owner 2026-09-28 — sessions own their model
  * from birth, stamped from the strong slot.)
  */
-export const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
+export const SETTINGS_FILE = path.join(/* turbopackIgnore: true */ DATA_ROOT, "settings.json");
 
 /**
  * User prompt-override files (settings-storage wave, 2026-09-19): the
@@ -137,7 +140,15 @@ export const SETTINGS_FILE = path.join(DATA_ROOT, "settings.json");
  * remove, or reorder fragments adapt automatically; an override keyed to
  * a vanished segment stops composing but stays on disk.
  */
-export const PROMPTS_OVERRIDE_DIR = path.join(DATA_ROOT, "prompts");
+export const PROMPTS_OVERRIDE_DIR = path.join(/* turbopackIgnore: true */ DATA_ROOT, "prompts");
+
+/**
+ * Imported custom themes (theme wave, 2026-11-04): one `<id>.json` per
+ * theme (core/themes.ts ThemeFile shape), written by POST /api/themes and
+ * listed beside the built-in presets. The settings record names the
+ * active one by id (appearance.theme).
+ */
+export const THEMES_DIR = path.join(/* turbopackIgnore: true */ DATA_ROOT, "themes");
 
 /**
  * THE AUTH/KEY STORE (auth-keys wave, 2026-09-19): BYOK provider keys in a
@@ -154,5 +165,5 @@ export const PROMPTS_OVERRIDE_DIR = path.join(DATA_ROOT, "prompts");
  * — this file keeps that role, alongside .env.local.
  */
 export const AUTH_FILE = process.env.LH_AUTH_FILE
-	? path.resolve(process.env.LH_AUTH_FILE)
-	: path.join(ROOT, "auth.json");
+	? path.resolve(/* turbopackIgnore: true */ process.env.LH_AUTH_FILE)
+	: path.join(/* turbopackIgnore: true */ ROOT, "auth.json");

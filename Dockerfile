@@ -7,8 +7,11 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts --no-audit --no-fund
 COPY . .
-# No electron payload in a server image; build-server.mjs curates the standalone output.
-RUN npx next build && node scripts/build-server.mjs
+# Core plugins (flashcards, coding questions, drawing pad, rich code blocks)
+# build from their own locked dependencies; npm run build packs them and the
+# plugin authoring kit before next build. No electron payload in a server
+# image; build-server.mjs curates the standalone output.
+RUN npm run plugins:setup && npm run build && node scripts/build-server.mjs
 
 FROM node:26-bookworm-slim AS run
 # Chromium powers the demo/visual agents' headless rendering (CHROME_PATH below).

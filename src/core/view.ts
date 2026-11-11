@@ -32,20 +32,20 @@
  * Pure and deterministic: client-safe (no node deps), same input → same view.
  */
 
-import type { AssistantMessage, ToolResultMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, ToolResultMessage } from "@earendil-works/pi-ai";
 import type { LhMarkerMessage, LhMessage } from "./native-messages.ts";
-import { modelSolutionForConclude, PRACTICE_CONCLUDE_TOOL, problemInputForConclude, SEND_TO_USER_TOOL, sendToUserText } from "./native-messages.ts";
+import { modelSolutionForConclude, PRACTICE_CONCLUDE_TOOL, problemInputForConclude, SEND_TO_USER_TOOL, sendToUserText, pluginQuestionResultMatches } from "./native-messages.ts";
+import { readPluginQuestionMessageAnnotation, readPluginQuestionCancellation, type PluginQuestionAnnotationRead } from "./plugin-questions.ts";
+import { pluginProblemForCall, type PluginProblemSnapshot } from "./plugin-problems.ts";
 import { activeCompactionOf, type CompactionDetails } from "./compaction.ts";
 import { QUESTION_TOOLS } from "./pending.ts";
 import type { SubagentArtifactData, SubagentResultMeta } from "./contracts/jobs.ts";
 import type { PlanBlockData } from "./contracts/chat.ts";
 
-/** A view part — the loose part vocabulary the renderers consume (the same
- *  shape names the pre-Wave-D UIMessage dialect used, so the renderer
- *  switch and the phase/pending scanners transplant unchanged). The common
- *  fields are optional-typed so the pre-Wave-D renderer code compiles
- *  against it with minimal casts; anything else stays `unknown` through
- *  the index signature. */
+/** One projected transcript part consumed by host renderers and phase/input
+ * scanners. type selects the part vocabulary; common fields are optional
+ * because text, tools and data parts carry different payloads. Additional
+ * fields remain unknown through the index signature and require narrowing. */
 export interface LhViewPart extends Record<string, unknown> {
 	type: string;
 	id?: string;
@@ -55,10 +55,15 @@ export interface LhViewPart extends Record<string, unknown> {
 	/** Native location, retained across display grouping (client-only). */
 	sourceMessageId?: string;
 	sourceContentIndex?: number;
+	/** Must be selected before any generic tool renderer; never a raw trace. */
+	pluginQuestion?: Exclude<PluginQuestionAnnotationRead, { status: "absent" }>;
+	pluginProblem?: PluginProblemSnapshot;
 	input?: unknown;
 	output?: unknown;
 	rawInput?: unknown;
 	errorText?: string;
+	/** Native result retained for public plugin renderers and readable fallbacks. */
+	result?: Pick<ToolResultMessage, "content" | "details" | "isError">;
 	data?: unknown;
 }
 
@@ -78,6 +83,7 @@ export interface LiveExecution {
 	output?: unknown;
 	/** The failure text (output-error parts). */
 	errorText?: string;
+	result?: Pick<ToolResultMessage, "content" | "details" | "isError">;
 }
 
 /** The live turn's execution layer, maintained by the session hook. */
@@ -101,6 +107,14 @@ function textPart(text: string): LhViewPart {
 
 /** The result a tool part should show, from a native toolResult. */
 function applyResult(part: LhViewPart, result: ToolResultMessage): void {
+	if (part.pluginQuestion) {
+		// Authored payload/error prose must never escape through generic trace.
+		if (result.isError) { part.state = "output-error"; return; }
+		part.state = "output-available";
+		part.output = result.details;
+		return;
+	}
+	part.result = { content: result.content, details: result.details, isError: result.isError };
 	if (result.isError) {
 		part.state = "output-error";
 		part.rawInput = part.input;
@@ -136,23 +150,11 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 		}
 	}
 
-	// Threads told after they closed (#16): their chips show as told.
-	// …and threads a later one continues give way to it (one chip, at the
-	// conversation's latest point).
-	const toldLater = new Set<string>();
-	const continued = new Set<string>();
-	for (const message of messages) {
-		if (message.role !== "custom") continue;
-		if (message.customType === "side-question-told") toldLater.add((message.details as { threadId: string }).threadId);
-		const continues = message.customType === "side-question" ? (message.details as { continues?: unknown }).continues : undefined;
-		if (typeof continues === "string") continued.add(continues);
-	}
-
 	const lastAssistant = (): LhViewMessage | undefined => {
 		const last = out[out.length - 1];
 		return last && last.role === "assistant" ? last : undefined;
 	};
-	const findToolPart = (toolCallId: string): LhViewPart | undefined => {
+	const findToolPart = (result: LhMessage & ToolResultMessage): LhViewPart | undefined => {
 		for (let i = out.length - 1; i >= 0; i--) {
 			// NEWEST-FIRST part scan within a group (the Lacan heal, 2026-10-04):
 			// a result pairs with the most RECENT call carrying its id. Unique
@@ -163,7 +165,13 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 			const parts = out[i]!.parts;
 			for (let p = parts.length - 1; p >= 0; p--) {
 				const part = parts[p]!;
-				if (part.type.startsWith("tool-") && part.toolCallId === toolCallId) return part;
+				if (!part.type.startsWith("tool-") || part.toolCallId !== result.toolCallId) continue;
+				if (part.pluginQuestion) {
+					const occurrence = { messageId: part.sourceMessageId!, contentIndex: part.sourceContentIndex!, toolCallId: part.toolCallId!, toolName: part.type.slice(5) };
+					if (pluginQuestionResultMatches(result, occurrence, part.pluginQuestion) || (result.isError && part.pluginQuestion.status !== "posed")) return part;
+					continue;
+				}
+				if (!result.lhQuestionOccurrence && !readPluginQuestionCancellation(result.details)) return part;
 			}
 		}
 		return undefined;
@@ -195,29 +203,24 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 
 		if (role === "user") {
 			const content = m.content as string | Array<{ type: string; text?: string }>;
-			const texts =
-				typeof content === "string"
-					? [content]
-					: content.filter((c) => c.type === "text").map((c) => (c as { text: string }).text);
-			const attachmentIds = (m as LhMessage).attachmentIds;
-			out.push({
-				id: m.id,
-				role: "user",
-				parts: [
-					...texts.map(textPart),
-					...(attachmentIds?.length ? [{ type: "data-attachments", data: { ids: attachmentIds } }] : []),
-				],
+			const parts = typeof content === "string" ? [textPart(content)] : content.flatMap((block): LhViewPart[] => {
+				if (block.type === "text") return [textPart(block.text as string)];
+				if (block.type === "image") return [{ ...block as ImageContent }];
+				return [];
 			});
+			const attachmentIds = (m as LhMessage).attachmentIds;
+			if (attachmentIds?.length) parts.push({ type: "data-attachments", data: { ids: attachmentIds } });
+			out.push({ id: m.id, role: "user", parts });
 			continue;
 		}
 
 		if (role === "custom") {
-			projectMarker(m as LhMarkerMessage, out, toldLater, continued);
+			projectMarker(m as LhMarkerMessage, out);
 			continue;
 		}
 
 		if (role === "toolResult") {
-			applyResultTo(findToolPart((m as ToolResultMessage).toolCallId), m as ToolResultMessage);
+			applyResultTo(findToolPart(m as LhMessage & ToolResultMessage), m as ToolResultMessage);
 			continue;
 		}
 
@@ -248,7 +251,17 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 				} else if (block.type === "thinking") {
 					reasoning.push({ type: "reasoning", id: `${m.id}-r${reasoningN++}`, text: block.thinking, state: "done" });
 				} else if (block.type === "toolCall") {
+					const annotation = readPluginQuestionMessageAnnotation(m, contentIndex);
+					if (annotation.status !== "absent") {
+						// Source position, not reasoning-partitioned/grouped view index.
+						rest.push({ type: `tool-${block.name}`, toolCallId: block.id,
+							sourceMessageId: m.id, sourceContentIndex: contentIndex, pluginQuestion: annotation,
+							state: annotation.status === "posed" ? "input-available" : streamingMessage ? "input-streaming" : "output-error" });
+						continue;
+					}
 					const part = toolPartOf(block, live, streamingMessage);
+					const pluginProblem = pluginProblemForCall(messages, { messageId: m.id, contentIndex, toolCallId: block.id, toolName: block.name });
+					if (pluginProblem) { part.pluginProblem = pluginProblem; part.input = pluginProblem.input; }
 					if ((QUESTION_TOOLS as readonly string[]).includes(block.name)) {
 						part.sourceMessageId = m.id;
 						part.sourceContentIndex = contentIndex;
@@ -300,9 +313,9 @@ export function projectView(messages: readonly LhMessage[], live?: LiveTurnState
 			const group = lastAssistant();
 			if (group) {
 				// Same group: the step separator renders between the steps.
-				group.parts.push({ type: "step-start" }, ...parts);
+				group.parts.push({ type: "step-start", sourceMessageId: m.id }, ...parts);
 			} else {
-				out.push({ id: m.id, role: "assistant", parts: [{ type: "step-start" }, ...parts] });
+				out.push({ id: m.id, role: "assistant", parts: [{ type: "step-start", sourceMessageId: m.id }, ...parts] });
 			}
 			continue;
 		}
@@ -341,6 +354,7 @@ function toolPartOf(
 	const exec = live?.executions.get(block.id);
 	const isQuestion = isPlaceholderResultTool(block.name);
 	if (exec) {
+		if (exec.result) part.result = exec.result;
 		if (exec.isError) {
 			// An invalid call NEVER becomes input-available — the dock's mount
 			// gate keys on the clean execution end (the live modal-realism
@@ -377,7 +391,7 @@ function applyResultTo(part: LhViewPart | undefined, result: ToolResultMessage):
 		// AnsweredCard a null and crash the render (the live crash, 2026-09-26).
 		const tool = part.type.startsWith("tool-") ? part.type.slice("tool-".length) : part.type;
 		const isQuestion = isPlaceholderResultTool(tool);
-		if (isQuestion && !result.isError && result.details == null) {
+		if (!result.isError && ((isQuestion && result.details == null) || part.pluginProblem)) {
 			// The placeholder fork (fork 2) stands: the clean pose/ask ack carries
 			// no card data — NEVER output-available. But the call IS settled
 			// (the practice bug, 2026-10-05: this early-return left the part on
@@ -395,7 +409,7 @@ function applyResultTo(part: LhViewPart | undefined, result: ToolResultMessage):
 }
 
 /** A marker's projected message (handoff/steers) or splice (plan block). */
-function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[], toldLater: ReadonlySet<string>, continued: ReadonlySet<string>): void {
+function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[]): void {
 	switch (marker.customType) {
 		case "graph-context": {
 			// The session's map context (owner, 2026-10-04): user-side —
@@ -448,6 +462,10 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[], toldLater:
 			});
 			return;
 		}
+		case "plugin-problem-submission": {
+			out.push({ id: marker.id, role: "user", parts: [{ type: "data-plugin-problem-submission", id: `ps_${marker.id}`, data: marker.details }] });
+			return;
+		}
 		case "practice-thinking": {
 			// The learner's working trace / committed answer (practice
 			// sessions): a user-side card keyed on the structured details
@@ -472,24 +490,12 @@ function projectMarker(marker: LhMarkerMessage, out: LhViewMessage[], toldLater:
 			});
 			return;
 		}
-		case "side-question": {
-			if (continued.has(marker.id)) return; // a later thread continues it
-			// A closed side thread (#16): a compact chip at its position;
-			// clicking reopens the thread read-only. Told or not, the chip
-			// shows — the details carry the whole thread.
-			out.push({
-				id: marker.id,
-				role: "user",
-				parts: [{
-					type: "data-side-question",
-					id: `sq_${marker.id}`,
-					data: toldLater.has(marker.id) ? { ...(marker.details as object), toldTutor: true } : marker.details,
-				}],
-			});
-			return;
-		}
+		case "side-question":
 		case "side-question-told":
-			return; // folded into its thread's chip
+			// Raw context entries do not split the teaching segment or render
+			// loud transcript pills. Its quiet speech-bubble reopens the saved
+			// conversation in the floating/docked companion.
+			return;
 		case "problem-dismissed":
 			// UI-only (the ask-style dismissal): the synthesized conclude
 			// pair — which rides the NEXT input — carries the record's face.

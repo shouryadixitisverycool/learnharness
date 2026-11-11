@@ -1,13 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import type { ViewReaderRef } from "./session-view-readers";
 import { ChevronRightIcon } from "lucide-react";
 import { ToolContentResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import { joinDictation, useDictationTarget } from "@/components/dictation";
 import { useEnterSubmits } from "@/components/enter-submits";
+import { useOptionalInteractionLayers } from "./interaction-layers";
+import { isInteractionScopeEligible } from "./plugin-input-focus";
 import { PathInput } from "@/components/path-input";
+import type { PrepareThinkingSubmission } from "./plugin-submission-adapters";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,6 +35,7 @@ import { cn } from "@/lib/utils";
  */
 
 export interface PracticeDockProps {
+	viewReader?: ViewReaderRef<string>;
 	/** The active problem's tool-call id (submissions target it). */
 	problemCallId: string;
 	/** The pose's arguments — only the statement and the reference sheet
@@ -42,6 +47,17 @@ export interface PracticeDockProps {
 	onExpand: () => void;
 	/** text — POST {type:"thinking"} (one lane; the register is read from the text). */
 	onSubmit: (text: string) => void;
+	onPrepareSubmission?: PrepareThinkingSubmission;
+	/** Host-owned alternative editor. The native statement/thinking/controls stay shared. */
+	customInput?: {
+		editor: ReactNode;
+		thinking: string;
+		onThinkingChange(value: string): void;
+		ready: boolean;
+		prepare: PrepareThinkingSubmission;
+	};
+	hasPendingInput?: boolean;
+	preparing?: boolean;
 	/** Escape in the thinking field stops dictation (threaded from the page). */
 	onEscape?: () => void;
 	/** Compaction is running for this chat (owner round 14): the thinking
@@ -51,11 +67,17 @@ export interface PracticeDockProps {
 	compactionRunning?: boolean;
 }
 
-export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmit, onEscape, compactionRunning = false }: PracticeDockProps) {
-	const [thinking, setThinking] = useState("");
-	// A pose carrying a reference sheet IS a worksheet: it opens fullscreen
-	// at once (the issue's word), and the Close button drops back here.
-	const hasRef = typeof input.reference === "string" && input.reference.trim() !== "";
+export function PracticeDock({ viewReader, problemCallId, input, expanded, onExpand, onSubmit, onPrepareSubmission, customInput, hasPendingInput = false, preparing = false, onEscape, compactionRunning = false }: PracticeDockProps) {
+	const controller = useOptionalInteractionLayers();
+	const rootRef = useRef<HTMLElement>(null);
+	const [nativeThinking, setNativeThinking] = useState("");
+	const custom = useRef(customInput); custom.current = customInput;
+	const thinking = customInput ? customInput.thinking : nativeThinking;
+	const setThinking = (value: string) => { if (custom.current) custom.current.onThinkingChange(value); else setNativeThinking(value); };
+	// A native pose carrying a reference sheet IS a worksheet: it opens
+	// fullscreen at once (the issue's word), and the Close button drops back
+	// to the dock. Plugin problems bring their own editor and never do.
+	const hasRef = !customInput && typeof input.reference === "string" && input.reference.trim() !== "";
 	const [full, setFull] = useState(hasRef);
 	// The overlay PORTALS after mount: the dock's shell clips and, while its
 	// variant animation runs, transforms — a fixed child would ride inside it.
@@ -65,13 +87,20 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 	// Ref MIRRORS the field ("nothing gets lost", the question-dock
 	// discipline): a submit resuming after `await finishDictation()` reads
 	// the tail, never a stale closure.
-	const thinkingRef = useRef("");
+	const thinkingRef = useRef(thinking); thinkingRef.current = thinking;
+	const editRevision = useRef(0);
+	useLayoutEffect(() => {
+		if (!viewReader) return;
+		const read = () => thinkingRef.current;
+		viewReader.current = read;
+		return () => { if (viewReader.current === read) viewReader.current = null; };
+	}, [viewReader]);
 
 	useDictationTarget(
 		useCallback(
 			(t: string) => {
 				const v = joinDictation(thinkingRef.current, t);
-				thinkingRef.current = v;
+				thinkingRef.current = v; editRevision.current++;
 				setThinking(v);
 			},
 			[],
@@ -79,8 +108,18 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 		true,
 	);
 
+	useLayoutEffect(() => { viewReader?.changed?.(); }, [viewReader, thinking]);
 	const submit = () => {
-		if (compactionRunning) return;
+		if (compactionRunning || preparing) return;
+		const prepare = customInput?.prepare ?? onPrepareSubmission;
+		if (prepare) {
+			if (customInput ? !customInput.ready : (!thinkingRef.current.trim() && !hasPendingInput)) return;
+			let capturedRevision = editRevision.current;
+			prepare(() => { capturedRevision = editRevision.current; return customInput ? thinkingRef.current : thinkingRef.current.trim(); }, captured => {
+				if (editRevision.current === capturedRevision && (customInput ? thinkingRef.current : thinkingRef.current.trim()) === captured) { thinkingRef.current = ""; setThinking(""); }
+			});
+			return;
+		}
 		const text = thinkingRef.current.trim();
 		if (text.length === 0) return;
 		thinkingRef.current = "";
@@ -92,9 +131,10 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 	 * means the field is often never focused — the window-level Enter
 	 * (typing surfaces and buttons excluded) submits the trace. Mounted
 	 * while the dock is — collapsed bar included (the trace survives). */
-	useEnterSubmits(submit);
+	useEnterSubmits(submit, rootRef);
 
-	/* The learner's half: the field, identical in the dock and the worksheet. */
+	/* The learner's half: the field, identical in the dock and the worksheet.
+	   Enter SENDS (owner round 2, 2026-10-05); Shift+Enter makes a newline. */
 	const thinkingField = (
 		<div
 			data-testid="practice-thinking-field"
@@ -106,13 +146,15 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 			<PathInput
 				value={thinking}
 				onValueChange={(value) => {
-					thinkingRef.current = value;
+					thinkingRef.current = value; editRevision.current++;
 					setThinking(value);
 				}}
 				onKeyDown={(e) => {
+					if (!isInteractionScopeEligible(e.currentTarget, controller)) return;
 					// Esc ends dictation — stopPropagation claims it (the
 					// keyboard machine) so the window chain doesn't also fire.
 					if (e.key === "Escape" && onEscape) {
+						controller?.claimEscape(e);
 						e.preventDefault();
 						e.stopPropagation();
 						onEscape();
@@ -141,20 +183,20 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 				<Button
 					type="button"
 					data-testid="practice-send"
-					disabled={thinking.trim().length === 0 || compactionRunning}
+					disabled={(customInput ? !customInput.ready : (!thinking.trim() && !hasPendingInput)) || compactionRunning || preparing}
 					onClick={() => submit()}
 					className="ml-auto h-9 rounded-[6px] px-3.5 text-sm font-medium"
 				>
-					Submit thinking
+					{customInput ? "Submit" : "Submit thinking"}
 				</Button>
 			</div>
 		</div>
 	);
 
 	/* ── the collapsed bar ── */
-	if (!expanded) {
-		return (
+	const bar = (
 			<button
+				ref={element => { if (!customInput) rootRef.current = element; }}
 				type="button"
 				data-testid="practice-dock-bar"
 				onClick={onExpand}
@@ -165,7 +207,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 				<span className="min-w-0 flex-1 truncate">{input.statement}</span>
 			</button>
 		);
-	}
+	if (!expanded && !customInput) return bar;
 
 	/* The agent's half: the 'Problem' eyebrow (mirroring the quiz cards' label
 	   row — owner round, 2026-10-05) + the statement, markdown + LaTeX
@@ -183,7 +225,7 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 	/* ── the fullscreen worksheet ── */
 	if (full && hasRef) {
 		const worksheet = (
-			<div data-testid="worksheet-full" data-problem={problemCallId} className="fixed inset-0 z-50 flex flex-col bg-background">
+			<div ref={element => { rootRef.current = element; }} data-testid="worksheet-full" data-problem={problemCallId} className="fixed inset-0 z-50 flex flex-col bg-background">
 				<div className="flex items-center justify-between border-b px-4 py-2">
 					<div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Worksheet</div>
 					<Button
@@ -220,24 +262,29 @@ export function PracticeDock({ problemCallId, input, expanded, onExpand, onSubmi
 
 	/* ── the expanded form ── */
 	return (
-		<div data-testid="practice-dock" data-problem={problemCallId} className="lh-practice-dock">
-			{statement("max-h-[var(--dock-max-h,40vh)]")}
+		<div ref={element => { rootRef.current = element; }} data-testid="practice-dock" data-problem={problemCallId} className="lh-practice-dock">
+			{!expanded && bar}
+			<div hidden={!expanded}>
+				{statement("max-h-[var(--dock-max-h,40vh)]")}
 
-			{hasRef && (
-				<div className="px-4 pb-2">
-					<Button
-						type="button"
-						variant="outline"
-						data-testid="worksheet-open"
-						onClick={() => setFull(true)}
-						className="h-9 rounded-[6px] px-3.5 text-sm font-medium"
-					>
-						Open worksheet
-					</Button>
-				</div>
-			)}
+				{hasRef && (
+					<div className="px-4 pb-2">
+						<Button
+							type="button"
+							variant="outline"
+							data-testid="worksheet-open"
+							onClick={() => setFull(true)}
+							className="h-9 rounded-[6px] px-3.5 text-sm font-medium"
+						>
+							Open worksheet
+						</Button>
+					</div>
+				)}
 
-			{thinkingField}
+				{customInput?.editor}
+
+				{thinkingField}
+			</div>
 		</div>
 	);
 }

@@ -24,7 +24,7 @@
  *     would shadow every settings-page key change until restart.
  */
 
-const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, session, shell } = require("electron");
+const { app, BrowserWindow, Menu, ipcMain, nativeTheme, session, shell, dialog } = require("electron");
 const { pickAttachmentPath } = require("./attachment-picker.cjs");
 const { createChatGPT, fileStore } = require("./chatgpt.cjs");
 const { attachChatGPTChild, trustedSender, chatGPTControl } = require("./chatgpt-ipc.cjs");
@@ -58,47 +58,14 @@ const DATA_DIR = () => path.join(app.getPath("userData"), "data");
 /** Local vs self-hosted server choice (electron/remote-server.cjs). */
 const SERVER_FILE = () => path.join(app.getPath("userData"), "server.json");
 
-// NATIVE CHROME FOLLOWS THE MODE (light-mode wave, 2026-10-29): the window's
-// own background (resize lag, first paint) and the Windows/Linux control
-// overlay paint the rendered variant. Defaults mirror the app's palettes
-// (src/core/appearance-palette.ts MODE_DEFAULT_BACKGROUND).
-const WINDOW_CHROME = {
-	dark: { background: "#141414", symbol: "#e5e5e5" },
-	light: { background: "#f5f5f3", symbol: "#1a1a1a" },
-};
-const HEX = /^#[0-9a-f]{3}([0-9a-f]{3})?$/i;
-
-/** The appearance slice the renderer reports (or settings.json holds),
- *  reduced to what the chrome needs. Anything unknown → the dark factory. */
-function normalizeAppearance(a) {
-	return {
-		mode: a?.mode === "light" || a?.mode === "system" ? a.mode : "dark",
-		background: typeof a?.background === "string" && HEX.test(a.background) ? a.background : null,
-		lightBackground: typeof a?.lightBackground === "string" && HEX.test(a.lightBackground) ? a.lightBackground : null,
-	};
-}
-
-/** The appearance slice of the SAME settings file the server reads.
- *  Absent/corrupt → dark, the factory default. */
-function readAppearance() {
-	try {
-		return normalizeAppearance(JSON.parse(fs.readFileSync(path.join(DATA_DIR(), "settings.json"), "utf8"))?.appearance);
-	} catch {
-		return normalizeAppearance(null);
-	}
-}
+// Resolve the saved palette before window creation; renderer reports keep
+// it current after live saves. This helper needs no compiled server bundle.
+const { normalizeAppearance, themeSourceFor, serverDataDir, readAppearance, chromeColors } = require("./appearance-chrome.cjs");
 let appearance = normalizeAppearance(null);
-
-/** Native colors for the rendered variant (nativeTheme resolves System). */
-function chromeColors() {
-	const mode = nativeTheme.shouldUseDarkColors ? "dark" : "light";
-	const custom = mode === "dark" ? appearance.background : appearance.lightBackground;
-	return { color: custom ?? WINDOW_CHROME[mode].background, symbolColor: WINDOW_CHROME[mode].symbol };
-}
 
 function applyChrome(win) {
 	if (win.isDestroyed()) return;
-	const colors = chromeColors();
+	const colors = chromeColors(appearance);
 	win.setBackgroundColor(colors.color);
 	if (process.platform !== "darwin") win.setTitleBarOverlay(colors);
 }
@@ -331,13 +298,31 @@ function killServer() {
 	}, 3000);
 }
 
+/** Links leaving the app window may open only in a browser or mail client:
+ *  the same schemes chat markdown makes clickable. Other schemes (smb:,
+ *  file:, search-ms:, any app's custom handler) are dropped, and only the
+ *  scheme is logged. */
+const EXTERNAL_LINK_SCHEMES = new Set(["http:", "https:", "mailto:"]);
+function openExternalLink(target) {
+	let scheme = "unparseable";
+	try {
+		scheme = new URL(target).protocol;
+	} catch { /* logged below */ }
+	if (EXTERNAL_LINK_SCHEMES.has(scheme)) {
+		void shell.openExternal(target);
+		return;
+	}
+	log(`external link blocked (scheme ${scheme.slice(0, 40)})`);
+}
+
 /** Security posture (all defaults asserted explicitly; the guards are the
  *  checklist's own recommendations for localhost-app shells):
  *  - deny-by-default permission handler allowing only our loopback origin
  *    (groundwork for the mic/STT milestone — Electron auto-approves by
  *    default, we do not);
  *  - will-navigate pinned to the app origin; window.open always denied —
- *    external links go to the real browser via shell.openExternal. */
+ *    external links go to the real browser via shell.openExternal, for
+ *    http, https and mailto only (openExternalLink). */
 function createWindow(url) {
 	const win = new BrowserWindow({
 		width: 1440,
@@ -360,7 +345,7 @@ function createWindow(url) {
 				// height. Do not force the zoom-invariant native overlay to match
 				// the renderer's 60 CSS px bar: zooming out would cover its border.
 				// The renderer reserves the actual width via env(titlebar-area-*).
-				titleBarOverlay: chromeColors(),
+				titleBarOverlay: chromeColors(appearance),
 				// Keep the custom bar alone; Alt reveals the native menu.
 				autoHideMenuBar: true,
 			}),
@@ -379,7 +364,7 @@ function createWindow(url) {
 		// (chromeColors). `show: false` + ready-to-show is the same treatment
 		// for first paint: the window appears only once the page has
 		// actually rendered.
-		backgroundColor: chromeColors().color,
+		backgroundColor: chromeColors(appearance).color,
 		show: false,
 		// Narrow-window behavior (owner, 2026-09-17): 640px is the floor —
 		// below it even a wrapped chrome row gets cramped and the chat header
@@ -431,11 +416,11 @@ function createWindow(url) {
 	win.webContents.on("will-navigate", (event, target) => {
 		if (new URL(target).origin !== allowedOrigin()) {
 			event.preventDefault();
-			void shell.openExternal(target);
+			openExternalLink(target);
 		}
 	});
 	win.webContents.setWindowOpenHandler(({ url: target }) => {
-		void shell.openExternal(target);
+		openExternalLink(target);
 		return { action: "deny" };
 	});
 
@@ -827,14 +812,13 @@ async function main() {
 
 	await app.whenReady();
 
-	// The mode before the first window: themeSource takes the settings'
-	// "dark" | "light" | "system" verbatim, and nativeTheme then resolves
-	// System for chromeColors. Under System an OS flip recolors every window.
-	appearance = readAppearance();
-	nativeTheme.themeSource = appearance.mode;
-	nativeTheme.on("updated", () => {
-		for (const win of BrowserWindow.getAllWindows()) applyChrome(win);
-	});
+	// Read the same record/custom theme the server uses before constructing
+	// any native window, including the external development shell.
+	appearance = readAppearance(serverDataDir({
+		devUrl: process.env.LH_DEV_URL, env: process.env,
+		packagedDataDir: DATA_DIR(), repoRoot: path.join(__dirname, ".."),
+	}));
+	nativeTheme.themeSource = themeSourceFor(appearance.mode);
 
 	// Dev mode: point at a running `next dev` server (LH_DEV_URL) — no
 	// spawn, no packaging, full HMR. The rest of this shell still applies
@@ -886,7 +870,24 @@ async function main() {
 		await waitUntilUp(url);
 		log(`server up: ${url}`);
 	} else {
-		log(`dev mode: ${devUrl}`);
+		log(`dev mode: ${devUrl} — waiting for server`);
+		const { waitForDevServer } = require("./dev-server-readiness.cjs");
+		const startup = new AbortController();
+		const cancelStartup = () => startup.abort(new Error("Development startup cancelled by application quit"));
+		app.once("before-quit", cancelStartup);
+		try {
+			await waitForDevServer(devUrl, { signal: startup.signal });
+			if (startup.signal.aborted) return;
+			log(`dev server ready: ${devUrl}`);
+		} catch (error) {
+			if (!startup.signal.aborted) {
+				log(`dev server startup failed: ${error?.message ?? error}`);
+				app.exit(1);
+			}
+			return;
+		} finally {
+			app.removeListener("before-quit", cancelStartup);
+		}
 	}
 
 	// Renderer controls contain no token/URL/code operation. The separate server
@@ -967,9 +968,9 @@ async function main() {
 	// The renderer reports every appearance write (and the record on load):
 	// the chrome follows without a restart.
 	ipcMain.on("lh:appearance", (event, next) => {
-		if (!trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender))) return;
+		if (!trustedAppWindows.has(BrowserWindow.fromWebContents(event.sender)) || !trustedSender(event, new URL(url).origin, BrowserWindow)) return;
 		appearance = normalizeAppearance(next);
-		nativeTheme.themeSource = appearance.mode;
+		nativeTheme.themeSource = themeSourceFor(appearance.mode);
 		for (const win of BrowserWindow.getAllWindows()) applyChrome(win);
 	});
 	reopenWindow = () => { chatgpt?.resume(); subscriptions?.resume(); return createWindow(url); };
