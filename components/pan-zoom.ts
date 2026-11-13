@@ -53,3 +53,21 @@ export function zoomedGraphView(
 	const k = zoom / view.zoom;
 	return { zoom, x: focus.x - (focus.x - view.x) * k, y: focus.y - (focus.y - view.y) * k };
 }
+
+/** A two-finger pinch: scale the view it STARTED from by `scale` around the
+ *  starting midpoint, then follow the midpoint as it moves (two-finger pan).
+ *  Clamped like zoomedGraphView; at the floor the view re-fits. Pure. */
+export function pinchedGraphView(
+	start: Viewport,
+	scale: number,
+	startMid: { x: number; y: number },
+	mid: { x: number; y: number },
+	floor: number,
+	box: { w: number; h: number },
+	viewport: { w: number; h: number },
+): Viewport {
+	const zoom = Math.min(Math.max(start.zoom * scale, floor), ZOOM_MAX);
+	if (zoom <= floor) return fitGraphView(box, viewport, floor);
+	const k = zoom / start.zoom;
+	return { zoom, x: mid.x - (startMid.x - start.x) * k, y: mid.y - (startMid.y - start.y) * k };
+}

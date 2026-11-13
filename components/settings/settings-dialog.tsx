@@ -270,6 +270,18 @@ export function SettingsDialogBody({
 		if (missingPlugin) setActive(management);
 	}, [missingPlugin, management]);
 	const selected = missingPlugin ? management : active;
+	// Phone layout scrolls the nav sideways: keep the open section's tab in view.
+	const navRef = useRef<HTMLElement>(null);
+	useEffect(() => {
+		const nav = navRef.current;
+		const tab = nav?.querySelector<HTMLElement>('[aria-current="true"]');
+		if (!nav || !tab || nav.scrollWidth <= nav.clientWidth) return;
+		const navBox = nav.getBoundingClientRect();
+		const tabBox = tab.getBoundingClientRect();
+		if (tabBox.left < navBox.left || tabBox.right > navBox.right - 32) {
+			nav.scrollTo?.({ left: Math.max(nav.scrollLeft + tabBox.left - navBox.left - 8, 0), behavior: "smooth" });
+		}
+	}, [selected]);
 	const navSections: { id: SectionId; label: string; icon?: LucideIcon }[] = [
 		...SECTIONS,
 		{ id: "core-plugins", label: "Core plugins", icon: PlugIcon },
@@ -406,6 +418,7 @@ export function SettingsDialogBody({
 				{/* Left nav — mono labels and theme-inherited decorative icons,
 					    active = bg-accent. */}
 				<nav
+					ref={navRef}
 					aria-label="Settings sections"
 					data-testid="settings-nav"
 					className="lh-settings-nav flex min-h-0 w-48 shrink-0 flex-col gap-1 overflow-y-auto border-r border-border p-2"

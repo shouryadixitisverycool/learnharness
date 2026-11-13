@@ -9,7 +9,7 @@
 
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { FIT_ZOOM_MAX, ZOOM_MAX, fitGraphView, fitZoomFor, zoomedGraphView } from "../components/pan-zoom.ts";
+import { FIT_ZOOM_MAX, ZOOM_MAX, fitGraphView, fitZoomFor, pinchedGraphView, zoomedGraphView } from "../components/pan-zoom.ts";
 
 describe("fitZoomFor", () => {
 	it("binds on the axis that runs out of room (wide box → width)", () => {
@@ -68,5 +68,26 @@ describe("zoomedGraphView", () => {
 		const view = { x: -37, y: 12, zoom: 1 };
 		const out = zoomedGraphView(view, 1, floor, { x: 0, y: 0 }, box, viewport);
 		assert.equal(out, view);
+	});
+});
+
+describe("pinchedGraphView", () => {
+	const box = { w: 400, h: 300 };
+	const viewport = { w: 400, h: 300 };
+	const start = { zoom: 1, x: 0, y: 0 };
+
+	it("keeps the content under the starting midpoint under the fingers", () => {
+		const v = pinchedGraphView(start, 2, { x: 100, y: 100 }, { x: 100, y: 100 }, 0.5, box, viewport);
+		assert.deepEqual(v, { zoom: 2, x: -100, y: -100 });
+	});
+
+	it("follows the midpoint as both fingers move", () => {
+		const v = pinchedGraphView(start, 1, { x: 100, y: 100 }, { x: 130, y: 90 }, 0.5, box, viewport);
+		assert.deepEqual(v, { zoom: 1, x: 30, y: -10 });
+	});
+
+	it("clamps at the ceiling and re-fits at the floor", () => {
+		assert.equal(pinchedGraphView(start, 10, { x: 0, y: 0 }, { x: 0, y: 0 }, 0.5, box, viewport).zoom, ZOOM_MAX);
+		assert.deepEqual(pinchedGraphView(start, 0.1, { x: 50, y: 50 }, { x: 80, y: 80 }, 0.5, box, viewport), fitGraphView(box, viewport, 0.5));
 	});
 });

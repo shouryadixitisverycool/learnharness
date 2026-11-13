@@ -830,9 +830,9 @@ export function DictationBar({ dictation, disabled = false }: { dictation: Dicta
 					disabled={disabled || blocked}
 					aria-label={error ? `Dictation failed: ${error}` : "Start dictation"}
 					data-testid="dictation-toggle"
-					className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-border/50 bg-card/50 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground"
+					className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-border/50 bg-card/50 text-xs text-muted-foreground/70 shadow-lg backdrop-blur transition-colors hover:border-border hover:text-muted-foreground max-sm:h-10 max-sm:gap-2 max-sm:rounded-full max-sm:border-border max-sm:bg-card max-sm:text-sm max-sm:text-muted-foreground active:bg-accent"
 				>
-					<MicIcon className="size-3.5" />
+					<MicIcon className="size-3.5 max-sm:size-4" />
 					<span className="max-w-full truncate">{error ?? "Dictate"}</span>
 				</button>
 			</Hint>
@@ -848,7 +848,7 @@ export function DictationBar({ dictation, disabled = false }: { dictation: Dicta
 					disabled={phase === "stopping"}
 					aria-label="Stop dictation"
 					data-testid="dictation-toggle"
-					className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-destructive/10 px-2 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
+					className="flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-destructive/10 px-2 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20 max-sm:h-10 max-sm:rounded-full max-sm:px-4 max-sm:text-sm"
 				>
 					{phase === "stopping" ? <Loader2Icon className="size-3.5 animate-spin" /> : <MicIcon className="size-3.5" />}
 					Stop
