@@ -13,11 +13,20 @@
 	}
 	.lh-settings-dialog { height: calc(100dvh - 16px); }
 	.lh-settings-body { flex-direction: column; }
+	/* One scrolling tab row, like the iPhone app: the old 3-column grid
+	   wrapped long labels and took a third of the screen. The fade on the
+	   right edge says there is more to swipe to. */
 	:root:not(.lh-ios) .lh-settings-nav {
-		display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
-		width: 100%; border-right: 0; border-bottom: 1px solid var(--border);
+		width: 100%; flex-direction: row; gap: 4px; overflow-x: auto; overflow-y: hidden;
+		border-right: 0; border-bottom: 1px solid var(--border); padding: 8px;
+		scrollbar-width: none; overscroll-behavior-x: contain;
+		mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent);
 	}
-	:root:not(.lh-ios) .lh-settings-nav button { min-height: 48px; padding: 8px 4px; font-size: 12px; text-align: center; }
+	:root:not(.lh-ios) .lh-settings-nav::-webkit-scrollbar { display: none; }
+	:root:not(.lh-ios) .lh-settings-nav > * { display: flex; flex-shrink: 0; }
+	:root:not(.lh-ios) .lh-settings-nav hr { display: none; }
+	:root:not(.lh-ios) .lh-settings-nav button { min-height: 40px; padding: 8px 12px; white-space: nowrap; }
+	:root:not(.lh-ios) .lh-settings-nav > div:last-child { padding-right: 24px; }
 	.lh-settings-content section { padding: 16px; }
 	.lh-settings-row { gap: 8px; }
 	.lh-settings-row > * { min-width: 0; max-width: 100%; }
@@ -341,6 +350,23 @@ body {
 
 .dock-variant {
 	animation: dock-variant-in 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* The dock's minimise button sits in the eyebrow row's right end: the row
+   grows to the button's height so the question text starts below it, and
+   the dock's scroll areas keep touch scrolling to themselves instead of
+   chaining into the page behind (overscroll-behavior). */
+.lh-dock-shell:has([data-testid="dock-minimise"]) [data-dock-eyebrow] {
+	display: flex;
+	align-items: center;
+	min-height: 1.75rem;
+	padding-right: 2.5rem;
+}
+@media (max-width: 639px) {
+	.lh-dock-shell:has([data-testid="dock-minimise"]) [data-dock-eyebrow] { min-height: 2.25rem; padding-right: 3rem; }
+}
+[data-dock-scroll-area], [data-dock-viewport] {
+	overscroll-behavior: contain;
 }
 
 /* A pinned question's capped area (dock-height.ts) fades its bottom edge so

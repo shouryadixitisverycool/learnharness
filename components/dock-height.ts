@@ -21,6 +21,8 @@ export interface DockHeightMeasurements {
 /** A question pinned open while scrolled up (owner, 2026-10-30) caps its
  *  question area at this share of the column, leaving the transcript room. */
 const PINNED_QUESTION_SHARE = 0.25;
+/** Matches the phone layout in globals.css. */
+const PHONE_QUERY = "(max-width: 639px)";
 
 export function dockHeightBudget(m: DockHeightMeasurements, pinned = false) {
 	const available = Math.max(m.columnHeight - 32, 0);
@@ -57,6 +59,9 @@ const pixels = (value: string) => Number.parseFloat(value) || 0;
  * and when the outer viewport is already capped. */
 export function syncDockHeight(elements: DockHeightElements, expanded: boolean, pinned = false) {
 	const { column, block, viewport, body, shell, content } = elements;
+	// Phones get one budget however the question opened: the pinned share
+	// left a sliver there, and the minimise button now gives the room back.
+	if (pinned && typeof window !== "undefined" && window.matchMedia?.(PHONE_QUERY).matches) pinned = false;
 	// QuestionDock keeps a laid-out form in an invisible h-0 wrapper;
 	// PracticeDock removes its form. Neither hidden form is a height input.
 	const question = expanded ? content.querySelector<HTMLElement>("[data-dock-scroll-area]") : null;

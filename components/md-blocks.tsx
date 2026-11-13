@@ -204,6 +204,8 @@ function MermaidInline({ chart }: { chart: string }) {
 				ref={holderRef}
 				className="mx-auto flex w-full justify-center"
 				style={capW === null ? undefined : { maxWidth: `${capW}px` }}
+				// Touch screens: a tap opens the pan/zoom view, where pinch works.
+				onClick={overlay && !displayOnly ? () => { if (window.matchMedia("(pointer: coarse)").matches) overlay.openMermaid(chart); } : undefined}
 				dangerouslySetInnerHTML={{ __html: svg ?? "" }}
 			/>
 			{!displayOnly && <div className="absolute top-0 right-0 flex items-start gap-0.5">
@@ -219,7 +221,7 @@ function MermaidInline({ chart }: { chart: string }) {
 						type="button"
 						aria-label="Expand diagram"
 						data-testid="md-mermaid-expand"
-												className="flex size-6 items-center justify-center rounded-md text-muted-foreground/70 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/md:opacity-100"
+												className="flex size-6 items-center justify-center rounded-md text-muted-foreground/70 opacity-0 transition-opacity hover:bg-accent hover:text-foreground group-hover/md:opacity-100 pointer-coarse:opacity-100"
 						onClick={(e) => {
 							blurAfterPointerClick(e);
 							overlay.openMermaid(chart);

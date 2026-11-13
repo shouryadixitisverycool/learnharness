@@ -71,7 +71,7 @@ import { PlanBlock, PlanPopup, latestTree } from "@/components/plan-block";
 import { PlanMarginalia, planExists } from "@/components/plan-window";
 import { MermaidOverlay, SessionMermaidContext, type SessionImage } from "@/components/session-overlay";
 import { AbortTurnDialog, type AbortMode } from "@/components/abort-turn-dialog";
-import { ArrowRightIcon, DumbbellIcon, MessageCircleQuestionIcon, WaypointsIcon } from "lucide-react";
+import { ArrowRightIcon, ChevronDownIcon, DumbbellIcon, MessageCircleQuestionIcon, WaypointsIcon } from "lucide-react";
 import type { PlanBlockData } from "@/src/core";
 import { QuestionDock } from "@/components/question-dock";
 import { PluginQuestionDock } from "./plugin-question-dock";
@@ -2723,10 +2723,14 @@ export function DockOverlay({
 	const prevPendingIdRef = useRef(pendingId);
 	// Set by an in-place open while scrolled up; the next question starts unpinned.
 	const pinnedRef = useRef(false);
+	// Set by the minimise button: the at-bottom auto-expand stays off until
+	// the learner scrolls away from the bottom or opens the question again.
+	const heldClosedRef = useRef(false);
 	if (pendingId !== prevPendingIdRef.current) {
 		const wasQuestion = prevPendingIdRef.current !== null;
 		prevPendingIdRef.current = pendingId;
 		pinnedRef.current = false;
+		heldClosedRef.current = false;
 		if (pendingId && requiresReveal) {
 			const arrival = revealArrival(wasQuestion);
 			setExpanded(arrival.expanded);
@@ -2938,6 +2942,7 @@ export function DockOverlay({
 		});
 	};
 	const expandAndReveal = () => {
+		heldClosedRef.current = false;
 		setRevealed(true); // the teach-check invitation was accepted (W5)
 		setExpanded(true);
 		// Scrolled up (owner, 2026-10-27): open in place, no jump to the
@@ -2950,6 +2955,13 @@ export function DockOverlay({
 	};
 	const expandAndRevealRef = useRef(expandAndReveal);
 	expandAndRevealRef.current = expandAndReveal;
+	// The minimise button: the only way to fold a question opened in place
+	// (pinned), and on a phone the quick way to see the lesson behind it.
+	const minimise = () => {
+		pinnedRef.current = false;
+		heldClosedRef.current = true;
+		setExpanded(false);
+	};
 	// ENTER OPENS THE WAITING CHECK (owner, keyboard round 2026-10-06):
 	// while a question waits with the dock CLOSED — behind its reveal
 	// invitation or collapsed by scroll — Enter is never dead. Any live
@@ -3007,6 +3019,9 @@ export function DockOverlay({
 					shouldFold(d, { intent: expandIntentRef.current, atBottom: atBottomRef.current, pinned: pinnedRef.current })
 				)
 					setExpanded(false);
+			} else if (heldClosedRef.current) {
+				// Minimised by hand: re-arm once the learner leaves the bottom.
+				if (d > COLLAPSE_DIST) heldClosedRef.current = false;
 			} else if (d < EXPAND_DIST) {
 				// Teach checks stay collapsed until the learner opens them (W5): the
 				// at-bottom auto-expand would pop the form over the teaching.
@@ -3109,7 +3124,7 @@ export function DockOverlay({
 							{askComposer}
 						</div>
 					)}
-					<div ref={shellRef} data-attachment-composer="" className="lh-dock-shell pointer-events-auto overflow-hidden rounded-2xl border bg-card shadow-lg">
+					<div ref={shellRef} data-attachment-composer="" className="lh-dock-shell pointer-events-auto relative overflow-hidden rounded-2xl border bg-card shadow-lg">
 						{preparationStatus}
 						{/* Include descendant margins (notably practice thinking's
 						    bottom margin) in the natural content measurement. */}
@@ -3147,7 +3162,7 @@ export function DockOverlay({
 									compactionRunning={compactionRunning}
 								/>
 							) : pluginPractice ? (
-								<PluginProblemDock {...pluginPractice} viewReader={customViewReader} expanded={expanded} onExpand={() => { setExpanded(true); void suppressFoldDuringReveal(); }} />
+								<PluginProblemDock {...pluginPractice} viewReader={customViewReader} expanded={expanded} onExpand={() => { heldClosedRef.current = false; setExpanded(true); void suppressFoldDuringReveal(); }} />
 							) : practice ? (
 								<PracticeDock
 									key={practice.toolCallId}
@@ -3156,6 +3171,7 @@ export function DockOverlay({
 									input={practice.input as { statement: string; reference?: string }}
 									expanded={expanded}
 									onExpand={() => {
+										heldClosedRef.current = false;
 										setExpanded(true);
 										void suppressFoldDuringReveal();
 									}}
@@ -3170,6 +3186,19 @@ export function DockOverlay({
 								composer
 							)}
 						</div>
+						{(pending || (pluginQuestion && pluginDraft)) && expanded && (
+							<Hint label="Minimise" side="left">
+								<button
+									type="button"
+									aria-label="Minimise question"
+									data-testid="dock-minimise"
+									onClick={minimise}
+									className="absolute top-2 right-2 z-10 flex size-8 items-center justify-center rounded-full border border-border/70 bg-card/90 text-muted-foreground shadow-sm backdrop-blur transition-colors hover:bg-accent hover:text-foreground max-sm:size-10"
+								>
+									<ChevronDownIcon className="size-4" />
+								</button>
+							</Hint>
+						)}
 					</div>
 					</div>
 					</div>
