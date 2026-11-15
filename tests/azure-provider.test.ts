@@ -102,8 +102,8 @@ function request(method: string, body?: unknown, origin = "http://localhost") {
 
 // ─── Settings sanitization ──────────────────────────────────────────────────
 
-describe("azureProvider settings sanitization", () => {
-	it("keeps a valid endpoint and well-formed deployments, drops the rest", () => {
+describe("azureProviders settings sanitization", () => {
+	it("migrates the single azureProvider section to provider \"azure\", keeping well-formed deployments", () => {
 		const out = settings.sanitizeUserSettings({
 			version: 1,
 			azureProvider: {
@@ -116,15 +116,48 @@ describe("azureProvider settings sanitization", () => {
 				],
 			},
 		});
-		assert.deepEqual(out?.azureProvider, {
+		assert.deepEqual(out?.azureProviders, [{
+			id: "azure",
 			endpoint: ENDPOINT,
 			models: [{ id: "gpt-6-sol", model: "gpt-6-sol-2026-09-22" }, { id: "luna" }],
+		}]);
+		assert.equal("azureProvider" in (out ?? {}), false, "the old section is dropped");
+	});
+	it("keeps list entries with a valid id and endpoint, first id wins", () => {
+		const out = settings.sanitizeUserSettings({
+			version: 1,
+			azureProvider: { endpoint: "https://ignored.example" },
+			azureProviders: [
+				{ id: "azure", endpoint: ENDPOINT, models: [] },
+				{ id: "azure-work", name: "  Work   account ", endpoint: "https://work.openai.azure.com/openai/v1/" },
+				{ id: "azure-work", endpoint: "https://dup.example" },
+				{ id: "openai", endpoint: ENDPOINT },
+				{ id: "azure-Bad", endpoint: ENDPOINT },
+				{ id: "azure-noendpoint" },
+				null,
+			],
 		});
+		assert.deepEqual(out?.azureProviders, [
+			{ id: "azure", endpoint: ENDPOINT, models: [] },
+			{ id: "azure-work", name: "Work account", endpoint: "https://work.openai.azure.com/openai/v1" },
+		]);
+	});
+	it("names new resources azure, then azure-<slug>, numbering collisions", () => {
+		assert.equal(settings.newAzureProviderId("Work", new Set()), "azure");
+		const taken = new Set(["azure"]);
+		assert.equal(settings.newAzureProviderId("Work", taken), "azure-work");
+		assert.equal(settings.newAzureProviderId("", taken), "azure-2");
+		assert.equal(settings.newAzureProviderId("Azure OpenAI", taken), "azure-2");
+		assert.equal(settings.newAzureProviderId("Azure East US 2", taken), "azure-east-us-2");
+		assert.equal(settings.newAzureProviderId("Work", new Set(["azure", "azure-work"])), "azure-work-2");
+		assert.equal(settings.newAzureProviderId("", new Set(["azure", "azure-2"])), "azure-3");
+		const long = settings.newAzureProviderId("x".repeat(200), taken);
+		assert.ok(settings.isAzureProviderId(long) && long.length <= settings.AZURE_ID_MAX, long);
 	});
 	it("accepts any https URL and drops everything else", () => {
 		assert.equal(settings.normalizeAzureEndpoint("https://proxy.example/azure/"), "https://proxy.example/azure");
 		for (const endpoint of ["", "http://x.openai.azure.com/openai/v1", "not a url", "https://u:p@x.example", "https://x.example/?a=1", 42]) {
-			assert.equal(settings.sanitizeUserSettings({ version: 1, azureProvider: { endpoint } })?.azureProvider?.endpoint, undefined, String(endpoint));
+			assert.deepEqual(settings.sanitizeUserSettings({ version: 1, azureProvider: { endpoint } })?.azureProviders, [], String(endpoint));
 		}
 	});
 });
@@ -214,7 +247,10 @@ describe("Azure key storage and registration", () => {
 		mockAzure();
 		const res = await route.POST(request("POST", { endpoint: `${ENDPOINT}/`, key: ` ${KEY} ` }));
 		assert.equal(res.status, 200);
-		const body = await res.json() as { endpoint: string; models: { id: string; name: string }[]; keyPresent: boolean; keySource: string };
+		const json = await res.json() as { saved: string; resources: { id: string; endpoint: string; models: { id: string; name: string }[]; keyPresent: boolean; keySource: string }[] };
+		assert.equal(json.saved, "azure");
+		const body = json.resources[0]!;
+		assert.equal(body.id, "azure");
 		assert.equal(body.endpoint, ENDPOINT);
 		assert.equal(body.keySource, "file");
 		assert.ok(!JSON.stringify(body).includes(KEY), "no key characters in the response");
@@ -272,7 +308,7 @@ describe("Azure key storage and registration", () => {
 		assert.equal(refused.status, 400);
 		const res = await route.POST(request("POST", { endpoint: ENDPOINT }));
 		assert.equal(res.status, 200);
-		assert.equal((await res.json() as { keySource: string }).keySource, "env");
+		assert.equal((await res.json() as { resources: { keySource: string }[] }).resources[0]!.keySource, "env");
 		assert.ok(requests.every((r) => r.key === "azure-env-owned-key-9876"));
 		assert.equal(readJson(AUTH_FILE)[AZURE_PROVIDER.envVar], undefined);
 	});
@@ -282,7 +318,7 @@ describe("Azure key storage and registration", () => {
 		const res = await route.POST(request("POST", { endpoint: ENDPOINT, key: KEY }));
 		assert.equal(res.status, 502);
 		assert.match((await res.json() as { error: string }).error, /Azure rejected the API key \(HTTP 401\)/);
-		assert.equal(fs.existsSync(SETTINGS_FILE) && Boolean(readJson(SETTINGS_FILE).azureProvider), false);
+		assert.equal(fs.existsSync(SETTINGS_FILE) && Boolean(readJson(SETTINGS_FILE).azureProviders), false);
 		assert.equal(readJson(AUTH_FILE)[AZURE_PROVIDER.envVar], undefined);
 		assert.equal(azure.azureProviderAvailable(), false);
 	});
@@ -291,15 +327,15 @@ describe("Azure key storage and registration", () => {
 		mockAzure();
 		assert.equal((await route.POST(request("POST", { endpoint: ENDPOINT, key: KEY }))).status, 200);
 		mockAzure({ deployments: { data: [dep("gpt-6-sol")] } });
-		const refreshed = await route.POST(request("POST", { endpoint: ENDPOINT }));
+		const refreshed = await route.POST(request("POST", { id: "azure", endpoint: ENDPOINT }));
 		assert.equal(refreshed.status, 200);
-		assert.deepEqual((await refreshed.json() as { models: { id: string }[] }).models.map((m) => m.id), ["gpt-6-sol"]);
+		assert.deepEqual((await refreshed.json() as { resources: { models: { id: string }[] }[] }).resources[0]!.models.map((m) => m.id), ["gpt-6-sol"]);
 		assert.ok(requests.every((r) => r.key === KEY));
 
-		const removed = await route.DELETE(request("DELETE", {}));
+		const removed = await route.DELETE(request("DELETE", { id: "azure" }));
 		assert.equal(removed.status, 200);
 		assert.equal(readJson(AUTH_FILE)[AZURE_PROVIDER.envVar], undefined);
-		assert.equal(readJson(SETTINGS_FILE).azureProvider, undefined);
+		assert.equal(readJson(SETTINGS_FILE).azureProviders, undefined);
 		assert.equal(piModels().getProvider(AZURE_PROVIDER.id), nativeAzureProvider());
 		assert.equal(catalog.catalogProviders().some((p) => p.id === AZURE_PROVIDER.id), false);
 	});
@@ -310,5 +346,117 @@ describe("Azure key storage and registration", () => {
 		assert.equal((await route.POST(request("POST", { endpoint: ENDPOINT }))).status, 400);
 		assert.equal((await route.POST(request("POST", { endpoint: "http://example-resource.openai.azure.com/openai/v1", key: KEY }))).status, 400);
 		assert.equal(requests.length, 0, "nothing reached Azure");
+	});
+});
+
+// ─── Several resources ──────────────────────────────────────────────────────
+
+describe("Several Azure resources", () => {
+	beforeEach(reset);
+	const WORK = "https://work-resource.openai.azure.com/openai/v1";
+	const WORK_KEY = "azure-work-key-abcdefghij";
+
+	/** Each endpoint's host answers the same lists; the second carries one deployment. */
+	function mockTwo() {
+		requests.length = 0;
+		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			const url = new URL(String(input));
+			requests.push({ url: String(input), key: new Headers(init?.headers).get("api-key") });
+			const work = url.host.startsWith("work-");
+			if (url.pathname === "/openai/deployments") return Response.json(work ? { data: [dep("gpt-6-sol"), dep("work-only", "vendor-thing-7")] } : DEPLOYMENTS);
+			if (url.pathname === "/openai/v1/models") return Response.json(MODELS);
+			return Response.json({ error: { message: "Resource not found" } }, { status: 404 });
+		}) as typeof fetch;
+	}
+
+	it("adds a second resource as its own provider with its own key", async () => {
+		mockTwo();
+		assert.equal((await route.POST(request("POST", { endpoint: ENDPOINT, key: KEY }))).status, 200);
+		const res = await route.POST(request("POST", { name: "Work", endpoint: WORK, key: WORK_KEY }));
+		assert.equal(res.status, 200);
+		const body = await res.json() as { saved: string; resources: { id: string; name: string; endpoint: string }[] };
+		assert.equal(body.saved, "azure-work");
+		assert.deepEqual(body.resources.map((r) => [r.id, r.name, r.endpoint]), [["azure", "", ENDPOINT], ["azure-work", "Work", WORK]]);
+		assert.ok(!JSON.stringify(body).includes(WORK_KEY));
+
+		const auth = readJson(AUTH_FILE);
+		assert.equal(auth[AZURE_PROVIDER.envVar], KEY);
+		assert.equal(auth["AZURE_OPENAI_API_KEY:azure-work"], WORK_KEY);
+		keys.initAuthEnv();
+		assert.equal(process.env["AZURE_OPENAI_API_KEY:azure-work"], undefined, "extra keys never reach process.env");
+		assert.equal(keys.keyStatuses().find((s) => s.id === "AZURE_OPENAI_API_KEY:azure-work")?.masked, "••••");
+		assert.equal(keys.isWritableAuthKey("AZURE_OPENAI_API_KEY:azure-work"), false);
+		assert.deepEqual(keys.saveKey("AZURE_OPENAI_API_KEY:azure-work", KEY), { ok: false, error: "Use the Azure OpenAI editor" });
+
+		assert.deepEqual(piModels().getModels("azure-work").map((m) => m.id).sort(), ["gpt-6-sol", "work-only"]);
+		assert.equal(piModels().getModels("azure").length, 4, "the first resource is untouched");
+		assert.equal(piModels().getProvider("azure-work")?.name, "Work");
+		assert.equal(keys.providerKeyPresent("azure-work"), true);
+		assert.equal(keys.providerKeyPresent("azure-nope"), false);
+		assert.deepEqual(catalog.catalogProviders().filter((p) => p.id.startsWith("azure")).map((p) => [p.id, p.keyPresent]), [["azure", true], ["azure-work", true]]);
+		const models = catalog.modelCatalog().models;
+		assert.equal(models.find((m) => m.provider === "azure-work" && m.id === "work-only")?.cost, null);
+		assert.ok((models.find((m) => m.provider === "azure-work" && m.id === "gpt-6-sol")?.cost?.input ?? 0) > 0);
+
+		const workAuth = await piModels().getAuth(piModels().getModel("azure-work", "gpt-6-sol")!);
+		assert.equal(workAuth?.auth.apiKey, WORK_KEY);
+		assert.equal(workAuth?.env?.AZURE_OPENAI_BASE_URL, WORK);
+		const firstAuth = await piModels().getAuth(piModels().getModel("azure", "gpt-6-sol")!);
+		assert.equal(firstAuth?.auth.apiKey, KEY);
+		assert.equal(piEngineForSpec({ provider: "azure-work", id: "gpt-6-sol" }).model.provider, "azure-work");
+	});
+
+	it("a second unnamed resource gets azure-2; a new resource needs its own key", async () => {
+		mockTwo();
+		assert.equal((await route.POST(request("POST", { endpoint: ENDPOINT, key: KEY }))).status, 200);
+		const noKey = await route.POST(request("POST", { endpoint: WORK }));
+		assert.equal(noKey.status, 400, "the first resource's key is never borrowed");
+		const res = await route.POST(request("POST", { endpoint: WORK, key: WORK_KEY }));
+		assert.equal((await res.json() as { saved: string }).saved, "azure-2");
+	});
+
+	it("a real env key only covers the first resource", async () => {
+		process.env.AZURE_OPENAI_API_KEY = "azure-env-owned-key-9876";
+		mockTwo();
+		assert.equal((await route.POST(request("POST", { endpoint: ENDPOINT }))).status, 200);
+		assert.equal((await route.POST(request("POST", { name: "Work", endpoint: WORK }))).status, 400);
+		const res = await route.POST(request("POST", { name: "Work", endpoint: WORK, key: WORK_KEY }));
+		assert.equal(res.status, 200);
+		const body = await res.json() as { resources: { id: string; keySource: string }[] };
+		assert.deepEqual(body.resources.map((r) => [r.id, r.keySource]), [["azure", "env"], ["azure-work", "file"]]);
+	});
+
+	it("edits, refreshes and removes one resource without touching the other", async () => {
+		mockTwo();
+		assert.equal((await route.POST(request("POST", { endpoint: ENDPOINT, key: KEY }))).status, 200);
+		assert.equal((await route.POST(request("POST", { name: "Work", endpoint: WORK, key: WORK_KEY }))).status, 200);
+
+		requests.length = 0;
+		const renamed = await route.POST(request("POST", { id: "azure-work", name: "Office", endpoint: WORK }));
+		assert.equal(renamed.status, 200);
+		assert.ok(requests.every((r) => r.key === WORK_KEY), "the edit reused the stored work key");
+		const after = await renamed.json() as { resources: { id: string; name: string }[] };
+		assert.deepEqual(after.resources.map((r) => [r.id, r.name]), [["azure", ""], ["azure-work", "Office"]], "the id stays fixed on rename");
+
+		assert.equal((await route.POST(request("POST", { id: "azure-nope", endpoint: WORK }))).status, 404);
+		assert.equal((await route.POST(request("POST", { id: "../etc", endpoint: WORK }))).status, 404);
+
+		const removed = await route.DELETE(request("DELETE", { id: "azure-work" }));
+		assert.equal(removed.status, 200);
+		assert.equal(readJson(AUTH_FILE)["AZURE_OPENAI_API_KEY:azure-work"], undefined);
+		assert.equal(readJson(AUTH_FILE)[AZURE_PROVIDER.envVar], KEY);
+		assert.equal(piModels().getProvider("azure-work"), undefined);
+		assert.equal(piModels().getModels("azure").length, 4);
+		assert.deepEqual((readJson(SETTINGS_FILE).azureProviders as { id: string }[]).map((r) => r.id), ["azure"]);
+
+		// Removing the first resource while another remains restores pi-ai's
+		// own entry under "azure" and keeps the other one registered.
+		assert.equal((await route.POST(request("POST", { name: "Work", endpoint: WORK, key: WORK_KEY }))).status, 200);
+		assert.equal((await route.DELETE(request("DELETE", { id: "azure" }))).status, 200);
+		assert.equal(piModels().getProvider("azure"), nativeAzureProvider());
+		assert.equal(azure.azureProviderAvailable("azure-work"), true);
+		// The next new resource takes the free "azure" id again.
+		const again = await route.POST(request("POST", { endpoint: ENDPOINT, key: KEY }));
+		assert.equal((await again.json() as { saved: string }).saved, "azure");
 	});
 });

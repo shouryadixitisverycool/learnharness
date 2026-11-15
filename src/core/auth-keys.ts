@@ -183,6 +183,19 @@ export const AZURE_PROVIDER = {
 	label: "Azure OpenAI",
 } as const;
 
+/** The auth-file name of one Azure resource's key. The first resource
+ *  ("azure") keeps AZURE_OPENAI_API_KEY, which a real env var can supply;
+ *  each extra resource gets "AZURE_OPENAI_API_KEY:<provider id>", which is
+ *  file-only (never an env var, never reflected into process.env). */
+export function azureKeyName(providerId: string): string {
+	return providerId === AZURE_PROVIDER.id ? AZURE_PROVIDER.envVar : `${AZURE_PROVIDER.envVar}:${providerId}`;
+}
+
+/** Does this auth-file name hold an Azure resource's key? */
+export function isAzureKeyName(name: string): boolean {
+	return name === AZURE_PROVIDER.envVar || name.startsWith(`${AZURE_PROVIDER.envVar}:`);
+}
+
 /** Every distinct env var a model-provider key rides in (the write side's
  *  writability check — see isProviderEnvVar below; also drives which
  *  PRESENT provider vars surface as status rows). */

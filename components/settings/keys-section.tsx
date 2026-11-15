@@ -31,6 +31,7 @@ import {
 	CUSTOM_MODEL_DEFAULT_CONTEXT_WINDOW,
 	CUSTOM_MODEL_DEFAULT_MAX_TOKENS,
 	CUSTOM_PROVIDER,
+	isAzureKeyName,
 	normalizeBaseUrl,
 	type AuthKeyStatus,
 	type CustomModel,
@@ -102,7 +103,8 @@ export const BEDROCK_PROVIDER_INFO: ProviderKeyInfo = {
 	label: BEDROCK_PROVIDER.label,
 };
 
-/** Azure OpenAI's synthetic Add-provider entry (offered only while unconfigured). */
+/** Azure OpenAI's synthetic Add-provider entry (always offered: each pick
+ *  adds another resource). */
 export const AZURE_PROVIDER_INFO: ProviderKeyInfo = {
 	id: AZURE_PROVIDER.id,
 	envVar: AZURE_PROVIDER.envVar,
@@ -147,8 +149,8 @@ export function classifyKeys(
 		if (s.id === CUSTOM_PROVIDER.envVar) continue;
 		// Same for the Bedrock key: its home is the Amazon Bedrock row.
 		if (s.id === BEDROCK_PROVIDER.envVar) continue;
-		// And the Azure key: its home is the Azure OpenAI row.
-		if (s.id === AZURE_PROVIDER.envVar) continue;
+		// And the Azure keys: their home is each Azure OpenAI row.
+		if (isAzureKeyName(s.id)) continue;
 		if (providerEnv.has(s.id) || (!s.info && providers === undefined)) providerRows.push(s);
 		else if (!s.info) unknownRows.push(s);
 		// (pre-interlude catalogs: a curated-but-unclassified status still
@@ -410,22 +412,23 @@ export function KeysSection({
 	/** Amazon Bedrock's status + whether its editor is open. */
 	const [bedrock, setBedrock] = useState<BedrockStatus | null>(null);
 	const [editingBedrock, setEditingBedrock] = useState(false);
-	/** Azure OpenAI's status + whether its editor is open. */
-	const [azure, setAzure] = useState<AzureStatus | null>(null);
-	const [editingAzure, setEditingAzure] = useState(false);
+	/** Azure OpenAI's saved resources + which editor is open (a resource's
+	 *  provider id, or "new" for the add editor). */
+	const [azure, setAzure] = useState<AzureStatus[]>([]);
+	const [editingAzure, setEditingAzure] = useState<string | null>(null);
 	const [customEditorMounted, setCustomEditorMounted] = useState(false);
 	const editorScopeRef = useRef<HTMLDivElement>(null);
 	// Escape folds any open editor (unfolded row, the Add-provider paste,
 	// Bedrock or Azure) WITHOUT closing the dialog: the editors form one view layer.
 	useInteractionLayer({
 		kind: "view", rootRef: editorScopeRef,
-		enabled: openRow !== null || adding !== null || addingCustom || editingBedrock || editingAzure,
+		enabled: openRow !== null || adding !== null || addingCustom || editingBedrock || editingAzure !== null,
 		onClose: () => {
 			setOpenRow(null);
 			setAdding(null);
 			setAddingCustom(false);
 			setEditingBedrock(false);
-			setEditingAzure(false);
+			setEditingAzure(null);
 			return "closed";
 		},
 	});
@@ -596,28 +599,42 @@ export function KeysSection({
 						onCancel={() => setEditingBedrock(false)}
 					/>
 				)}
-				{azure?.endpoint && (
-					<AzureRow status={azure} expanded={editingAzure} onToggle={() => setEditingAzure((v) => !v)} />
-				)}
-				{editingAzure && (
+				{azure.map((resource) => (
+					<div key={resource.id} className="contents">
+						<AzureRow status={resource} expanded={editingAzure === resource.id} onToggle={() => setEditingAzure((v) => v === resource.id ? null : resource.id)} />
+						{editingAzure === resource.id && (
+							<AzureEditor
+								key={`${resource.id}:${resource.endpoint}:${resource.models.length}`}
+								status={resource}
+								onSaved={async () => {
+									setEditingAzure(null);
+									await reload();
+									notifySettingsSaved("keys");
+								}}
+								onCancel={() => setEditingAzure(null)}
+							/>
+						)}
+					</div>
+				))}
+				{editingAzure === "new" && (
 					<AzureEditor
-						key={`${azure?.endpoint ?? ""}:${azure?.models.length ?? 0}`}
-						status={azure}
+						key="new"
+						status={null}
 						onSaved={async () => {
-							setEditingAzure(false);
+							setEditingAzure(null);
 							await reload();
 							notifySettingsSaved("keys");
 						}}
-						onCancel={() => setEditingAzure(false)}
+						onCancel={() => setEditingAzure(null)}
 					/>
 				)}
 				{providers !== undefined && (
 					<AddProviderRow
-						addable={[...addable, ...(custom?.baseUrl ? [] : [CUSTOM_PROVIDER_INFO]), ...(bedrock?.region ? [] : [BEDROCK_PROVIDER_INFO]), ...(azure?.endpoint ? [] : [AZURE_PROVIDER_INFO])]}
+						addable={[...addable, ...(custom?.baseUrl ? [] : [CUSTOM_PROVIDER_INFO]), ...(bedrock?.region ? [] : [BEDROCK_PROVIDER_INFO]), AZURE_PROVIDER_INFO]}
 						onPick={(p) => {
 							setAddError(null);
 							setEditingBedrock(false);
-							setEditingAzure(false);
+							setEditingAzure(null);
 							if (p.id === CUSTOM_PROVIDER.id) {
 								setAdding(null);
 								setCustomEditorMounted(true);
@@ -626,7 +643,7 @@ export function KeysSection({
 								setAdding(null);
 								setAddingCustom(false);
 								if (p.id === BEDROCK_PROVIDER.id) setEditingBedrock(true);
-								else setEditingAzure(true);
+								else setEditingAzure("new");
 							} else {
 								setAddingCustom(false);
 								setAddingEditors(editors => editors.some(provider => provider.id === p.id) ? editors : [...editors, p]);
