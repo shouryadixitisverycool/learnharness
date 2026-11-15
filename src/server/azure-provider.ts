@@ -1,5 +1,6 @@
 /**
- * Azure OpenAI through an endpoint URL + API key.
+ * Azure OpenAI through an endpoint URL + API key, one provider per saved
+ * resource ("azure" for the first, "azure-<slug>" for the rest).
  *
  * Discovery asks the resource for its deployments (the data-plane
  * deployments list) and for its model list (/models, which flags each
@@ -16,11 +17,13 @@ import { AZURE_MODELS } from "@earendil-works/pi-ai/providers/azure.models";
 import { configureProviderSource, nativeAzureProvider, piModels } from "../agent/models.ts";
 import { AZURE_PROVIDER } from "../core/auth-keys.ts";
 import {
+	AZURE_PRIMARY_ID,
 	CUSTOM_MODEL_DEFAULT_MAX_TOKENS,
 	azureProviderConfigured,
+	isAzureProviderId,
 	normalizeAzureEndpoint,
 	type AzureModel,
-	type AzureProviderSettings,
+	type AzureResourceSettings,
 } from "../core/settings.ts";
 import { readAzureFileKey } from "../store/auth.ts";
 import { readSettings } from "../store/settings.ts";
@@ -44,13 +47,29 @@ export interface AzureAuthState {
 	source: "env" | "file" | "none";
 }
 
-/** The effective key: a real env var wins over the file (the keys seam's
- *  precedence). The fresh-user switch hides env keys. */
-export function azureAuthState(): AzureAuthState {
-	const envKey = process.env.LH_IGNORE_ENV_KEYS !== "1" ? process.env[AZURE_PROVIDER.envVar]?.trim() : undefined;
+/** The saved Azure resources, in save order. */
+export function azureResources(): AzureResourceSettings[] {
+	return readSettings()?.azureProviders ?? [];
+}
+
+/** One saved resource by provider id. */
+export function azureResource(id: string): AzureResourceSettings | undefined {
+	return azureResources().find((r) => r.id === id);
+}
+
+/** The display name of a resource: its own, else "Azure OpenAI". */
+export function azureResourceName(resource: Pick<AzureResourceSettings, "name">): string {
+	return resource.name || AZURE_PROVIDER.label;
+}
+
+/** One resource's effective key. For the first resource ("azure") a real
+ *  env var wins over the file (the keys seam's precedence); extra
+ *  resources read the file only. The fresh-user switch hides env keys. */
+export function azureAuthState(id: string = AZURE_PRIMARY_ID): AzureAuthState {
+	const envKey = id === AZURE_PRIMARY_ID && process.env.LH_IGNORE_ENV_KEYS !== "1" ? process.env[AZURE_PROVIDER.envVar]?.trim() : undefined;
 	if (envKey) return { readable: true, key: envKey, source: "env" };
 	try {
-		const fileKey = readAzureFileKey()?.trim();
+		const fileKey = readAzureFileKey(id)?.trim();
 		return fileKey ? { readable: true, key: fileKey, source: "file" } : { readable: true, source: "none" };
 	} catch {
 		return { readable: false, source: "none" };
@@ -193,11 +212,11 @@ function knownEntry(model: AzureModel): Model<Api> | undefined {
  *  name when it knows the model (named "<name> (<deployment>)" when the
  *  deployment name differs); otherwise text only, no reasoning, a 128k
  *  context and an unknown price. */
-export function toAzurePiModel(model: AzureModel, endpoint: string): { model: Model<Api>; priceKnown: boolean } {
+export function toAzurePiModel(model: AzureModel, endpoint: string, providerId: string = AZURE_PRIMARY_ID): { model: Model<Api>; priceKnown: boolean } {
 	const known = knownEntry(model);
 	if (known) {
 		const name = known.id === model.id ? known.name : `${known.name} (${model.id})`;
-		return { model: { ...known, id: model.id, name, provider: AZURE_PROVIDER.id, baseUrl: endpoint }, priceKnown: true };
+		return { model: { ...known, id: model.id, name, provider: providerId, baseUrl: endpoint }, priceKnown: true };
 	}
 	return {
 		priceKnown: false,
@@ -205,7 +224,7 @@ export function toAzurePiModel(model: AzureModel, endpoint: string): { model: Mo
 			id: model.id,
 			name: model.model && model.model !== model.id ? `${model.id} (${model.model})` : model.id,
 			api: "azure-openai-responses",
-			provider: AZURE_PROVIDER.id,
+			provider: providerId,
 			baseUrl: endpoint,
 			reasoning: false,
 			input: ["text"],
@@ -217,74 +236,98 @@ export function toAzurePiModel(model: AzureModel, endpoint: string): { model: Mo
 	};
 }
 
-// HMR-stable: pricing reads this to show "unknown" instead of $0.
+// HMR-stable: pricing reads this to show "unknown" instead of $0. Keys
+// are "<provider id>:<deployment>". The registered set lets a re-evaluated
+// module retire extra resources an earlier copy registered.
 const unknownKey = Symbol.for("learnharness.azure-unknown-prices");
-const globals = globalThis as typeof globalThis & { [unknownKey]?: Set<string> };
+const registeredKey = Symbol.for("learnharness.azure-registered");
+const globals = globalThis as typeof globalThis & { [unknownKey]?: Set<string>; [registeredKey]?: Set<string> };
 const unknownPrices = globals[unknownKey] ??= new Set<string>();
+const registered = globals[registeredKey] ??= new Set<string>();
 
 /** True when the registered Azure model has no pi-ai price data. */
-export function azurePriceUnknown(id: string): boolean {
-	return unknownPrices.has(id);
+export function azurePriceUnknown(provider: string, id: string): boolean {
+	return unknownPrices.has(`${provider}:${id}`);
 }
 
-/** Build the configured Azure provider on pi's native Azure streams. The
+function forgetPrices(provider: string): void {
+	for (const key of unknownPrices) if (key.startsWith(`${provider}:`)) unknownPrices.delete(key);
+}
+
+/** Build one resource's provider on pi's native Azure streams. The
  *  endpoint, api-version and an identity deployment map ride per request as
  *  scoped env, which outranks any ambient AZURE_OPENAI_* values. */
-export function buildAzureProvider(input: { endpoint: string; models: readonly AzureModel[]; key: string }): Provider<Api> {
+export function buildAzureProvider(input: { id?: string; name?: string; endpoint: string; models: readonly AzureModel[]; key: string }): Provider<Api> {
 	const native = nativeAzureProvider();
 	if (!native) throw new Error("pi-ai's Azure provider is missing");
-	const mapped = input.models.map((m) => toAzurePiModel(m, input.endpoint));
-	unknownPrices.clear();
-	for (const { model, priceKnown } of mapped) if (!priceKnown) unknownPrices.add(model.id);
+	const id = input.id ?? AZURE_PRIMARY_ID;
+	const mapped = input.models.map((m) => toAzurePiModel(m, input.endpoint, id));
+	forgetPrices(id);
+	for (const { model, priceKnown } of mapped) if (!priceKnown) unknownPrices.add(`${id}:${model.id}`);
 	const env = {
 		AZURE_OPENAI_BASE_URL: input.endpoint,
 		AZURE_OPENAI_API_VERSION: "v1",
 		AZURE_OPENAI_DEPLOYMENT_NAME_MAP: input.models.map((m) => `${m.id}=${m.id}`).join(","),
 	};
+	const name = input.name || AZURE_PROVIDER.label;
 	return createProvider<Api>({
-		id: AZURE_PROVIDER.id,
-		name: AZURE_PROVIDER.label,
+		id,
+		name,
 		auth: { apiKey: {
-			name: "Azure OpenAI API key",
-			resolve: async () => ({ auth: { apiKey: input.key }, env, source: "Azure OpenAI API key" }),
+			name: `${name} API key`,
+			resolve: async () => ({ auth: { apiKey: input.key }, env, source: `${name} API key` }),
 		} },
 		models: mapped.map((m) => m.model),
 		api: { stream: native.stream, streamSimple: native.streamSimple },
 	});
 }
 
-/** Install the Azure source: configured + key + deployments → the
- *  discovered provider; otherwise pi-ai's own entry (hidden from the
- *  picker, as before). */
+/** Install the Azure source: each saved resource with a key and
+ *  deployments becomes its own provider. While the first resource
+ *  ("azure") is absent, pi-ai's own entry holds that id (hidden from the
+ *  picker, as before); extra resources that go away are deleted. */
 export function installAzureProviderSource(readAuth = azureAuthState): void {
 	let fingerprint: string | undefined;
 	configureProviderSource({
 		isCustom: () => false,
 		sync(models) {
-			const ap = readSettings()?.azureProvider;
-			const auth = readAuth();
-			const ready = azureProviderConfigured(ap) && Boolean(auth.key) && Boolean(ap.models?.length);
-			const next = JSON.stringify([ap ?? null, auth]); // in-memory only
+			const resources = readSettings()?.azureProviders ?? [];
+			const auths = resources.map((r) => readAuth(r.id));
+			const next = JSON.stringify([resources, auths]); // in-memory only
 			if (next === fingerprint) return;
-			if (ready) models.setProvider(buildAzureProvider({ endpoint: ap.endpoint, models: ap.models ?? [], key: auth.key! }));
-			else {
-				unknownPrices.clear();
+			const live = new Set<string>();
+			resources.forEach((r, i) => {
+				const key = auths[i]!.key;
+				if (!azureProviderConfigured(r) || !key || !r.models?.length) return;
+				models.setProvider(buildAzureProvider({ id: r.id, name: r.name, endpoint: r.endpoint, models: r.models, key }));
+				live.add(r.id);
+			});
+			for (const id of registered) {
+				if (live.has(id)) continue;
+				forgetPrices(id);
+				if (id !== AZURE_PRIMARY_ID) models.deleteProvider(id);
+			}
+			if (!live.has(AZURE_PRIMARY_ID)) {
 				const native = nativeAzureProvider();
 				if (native) models.setProvider(native);
 			}
+			registered.clear();
+			for (const id of live) registered.add(id);
 			fingerprint = next;
 		},
 	}, "azure");
 }
 
-/** Is the user's Azure provider registered (configured, key present)? */
-export function azureProviderAvailable(): boolean {
-	const current = piModels().getProvider(AZURE_PROVIDER.id);
+/** Is this Azure resource's provider registered (configured, key present,
+ *  deployments found)? */
+export function azureProviderAvailable(id: string = AZURE_PRIMARY_ID): boolean {
+	if (!isAzureProviderId(id)) return false;
+	const current = piModels().getProvider(id);
 	return current !== undefined && current !== nativeAzureProvider();
 }
 
-/** The editor's view of the stored snapshot: names joined from pi-ai. */
-export function azureModelRows(ap: AzureProviderSettings | undefined): { id: string; name: string; model?: string }[] {
-	if (!azureProviderConfigured(ap)) return [];
-	return (ap.models ?? []).map((m) => ({ id: m.id, name: toAzurePiModel(m, ap.endpoint).model.name, ...(m.model ? { model: m.model } : {}) }));
+/** The editor's view of one stored snapshot: names joined from pi-ai. */
+export function azureModelRows(resource: AzureResourceSettings | undefined): { id: string; name: string; model?: string }[] {
+	if (!azureProviderConfigured(resource)) return [];
+	return (resource.models ?? []).map((m) => ({ id: m.id, name: toAzurePiModel(m, resource.endpoint, resource.id).model.name, ...(m.model ? { model: m.model } : {}) }));
 }

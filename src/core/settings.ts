@@ -443,8 +443,49 @@ export function azureProviderConfigured(
 	return Boolean(ap?.endpoint);
 }
 
-/** The azureProvider section: valid endpoint or none; deployments with a
- *  non-empty id (deduped). Clamp-never-reject, like bedrockProvider. */
+/** The first Azure resource keeps pi-ai's own provider id, so model refs
+ *  saved before multi-resource support ("azure:<deployment>") still resolve. */
+export const AZURE_PRIMARY_ID = "azure";
+
+/** Extra resources are "azure-<slug>": lowercase letters, digits and dashes. */
+const AZURE_EXTRA_ID = /^azure-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const AZURE_ID_MAX = 40;
+
+/** Is this a provider id an Azure resource can own? */
+export function isAzureProviderId(id: unknown): id is string {
+	return typeof id === "string" && (id === AZURE_PRIMARY_ID || (id.length <= AZURE_ID_MAX && AZURE_EXTRA_ID.test(id)));
+}
+
+/** One saved Azure resource: its provider id, display name and config. */
+export interface AzureResourceSettings extends AzureProviderSettings {
+	id: string;
+	/** Display name in Settings → Keys. Absent = "Azure OpenAI". */
+	name?: string;
+}
+
+export const AZURE_NAME_MAX = 60;
+
+/** The display name: trimmed, single spaces, capped. "" when unusable. */
+export function normalizeAzureName(raw: unknown): string {
+	if (typeof raw !== "string") return "";
+	return raw.replace(/\s+/g, " ").trim().slice(0, AZURE_NAME_MAX);
+}
+
+/** A fresh provider id for a new resource: "azure" while it is free, else
+ *  "azure-<slug of name>" ("Work" → azure-work), numbered when the slug is
+ *  empty or taken (azure-2, azure-work-2). Pure. */
+export function newAzureProviderId(name: string, taken: ReadonlySet<string>): string {
+	if (!taken.has(AZURE_PRIMARY_ID)) return AZURE_PRIMARY_ID;
+	const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+		.replace(/^azure(?:-openai)?(?:-|$)/, "")
+		.slice(0, AZURE_ID_MAX - "azure-".length - 4).replace(/-+$/, "");
+	const base = slug ? `azure-${slug}` : AZURE_PRIMARY_ID;
+	if (base !== AZURE_PRIMARY_ID && !taken.has(base)) return base;
+	for (let n = 2; ; n++) if (!taken.has(`${base}-${n}`)) return `${base}-${n}`;
+}
+
+/** One azureProvider-shaped section: valid endpoint or none; deployments
+ *  with a non-empty id (deduped). Clamp-never-reject, like bedrockProvider. */
 export function sanitizeAzureProvider(raw: Record<string, unknown>): AzureProviderSettings {
 	const out: AzureProviderSettings = {};
 	const endpoint = normalizeAzureEndpoint(raw.endpoint);
@@ -462,6 +503,24 @@ export function sanitizeAzureProvider(raw: Record<string, unknown>): AzureProvid
 			byId.set(id, model);
 		}
 		out.models = [...byId.values()];
+	}
+	return out;
+}
+
+/** The azureProviders list: entries with a valid id and endpoint, first
+ *  occurrence of each id wins. Clamp-never-reject. */
+export function sanitizeAzureProviders(raw: unknown[]): AzureResourceSettings[] {
+	const out: AzureResourceSettings[] = [];
+	const seen = new Set<string>();
+	for (const entry of raw) {
+		if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+		const rec = entry as Record<string, unknown>;
+		if (!isAzureProviderId(rec.id) || seen.has(rec.id)) continue;
+		const section = sanitizeAzureProvider(rec);
+		if (!section.endpoint) continue;
+		const name = normalizeAzureName(rec.name);
+		seen.add(rec.id);
+		out.push({ id: rec.id, ...(name ? { name } : {}), ...section });
 	}
 	return out;
 }
@@ -667,8 +726,10 @@ export interface UserSettings {
 	customProvider?: CustomProviderSettings;
 	/** Amazon Bedrock's region + discovered models (non-secret config only). */
 	bedrockProvider?: BedrockProviderSettings;
-	/** Azure OpenAI's endpoint + discovered deployments (non-secret config only). */
-	azureProvider?: AzureProviderSettings;
+	/** Azure OpenAI resources: endpoint + discovered deployments each
+	 *  (non-secret config only). Replaces the single `azureProvider`
+	 *  section, which reads migrate into the list as provider "azure". */
+	azureProviders?: AzureResourceSettings[];
 	appearance?: AppearanceSettings;
 	graph?: GraphSettings;
 	compaction?: CompactionSettings;
@@ -1085,8 +1146,11 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 	if (r.bedrockProvider !== null && typeof r.bedrockProvider === "object" && !Array.isArray(r.bedrockProvider)) {
 		out.bedrockProvider = sanitizeBedrockProvider(r.bedrockProvider as Record<string, unknown>);
 	}
-	if (r.azureProvider !== null && typeof r.azureProvider === "object" && !Array.isArray(r.azureProvider)) {
-		out.azureProvider = sanitizeAzureProvider(r.azureProvider as Record<string, unknown>);
+	if (Array.isArray(r.azureProviders)) {
+		out.azureProviders = sanitizeAzureProviders(r.azureProviders);
+	} else if (r.azureProvider !== null && typeof r.azureProvider === "object" && !Array.isArray(r.azureProvider)) {
+		// The pre-list record: one resource, provider id "azure".
+		out.azureProviders = sanitizeAzureProviders([{ ...(r.azureProvider as Record<string, unknown>), id: AZURE_PRIMARY_ID }]);
 	}
 	if (r.graph !== null && typeof r.graph === "object" && !Array.isArray(r.graph)) {
 		out.graph = sanitizeGraph(r.graph as Record<string, unknown>);
@@ -1097,13 +1161,14 @@ export function sanitizeUserSettings(raw: unknown): UserSettings | null {
 	if (r.studyTime !== null && typeof r.studyTime === "object" && !Array.isArray(r.studyTime)) {
 		out.studyTime = sanitizeStudyTime(r.studyTime as Record<string, unknown>);
 	}
-	// Unknown top-level keys ride along untouched (forward-compat). One
-	// known-DEAD key is stripped instead of riding: `chat` (the old
+	// Unknown top-level keys ride along untouched (forward-compat). Two
+	// known-DEAD keys are stripped instead of riding: `chat` (the old
 	// default-settings section) died with per-session models (owner,
 	// 2026-09-28) — a fossil copy on disk must never resurrect through
-	// reads (and any later write flushes it from the file for good).
+	// reads (and any later write flushes it from the file for good) —
+	// and `azureProvider`, which migrated into `azureProviders` above.
 	for (const [key, value] of Object.entries(r)) {
-		if (key === "chat") continue;
+		if (key === "chat" || key === "azureProvider") continue;
 		if (!(key in out)) out[key] = value;
 	}
 	return out;
